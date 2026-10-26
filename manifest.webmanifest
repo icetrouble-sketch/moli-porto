@@ -1,0 +1,15 @@
+{
+  "name": "Moli del porto",
+  "short_name": "Moli porto",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FDFDF1",
+  "theme_color": "#FDFDF1",
+  "lang": "it",
+  "icons": [
+    { "src": "icone/icona-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icone/icona-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icone/icona-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

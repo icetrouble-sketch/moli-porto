@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FDFDF1">
+<meta name="robots" content="noindex, nofollow">
+<title>Moli del porto</title>
+<!-- icona e nome sulla schermata Home -->
+<link rel="apple-touch-icon" sizes="180x180" href="icone/icona-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icone/icona-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Moli porto">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>
+  /* Una schermata: testata, mappa a tutta altezza, striscia di schede in basso.
+     Palette: arancio e latte scelti da Mele, pastelli per i terminal. */
+  :root{
+    --arancio:#EC5E27;
+    --arancio-scuro:#B8461A;
+    --latte:#FDFDF1;
+    --inchiostro:#2A241F;
+    --grigio:#7A7268;
+    --linea:#E6E2D4;
+    --acqua:#DCE7EA;
+    --terra:#F7F5EA;
+    --porto:#EEEADB;
+    --verde:#3D6A43;
+    --ombra:0 2px 10px rgba(42,36,31,.10);
+    color-scheme:light;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none !important}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--latte);color:var(--inchiostro);
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  button,a,select{font:inherit}
+  :focus-visible{outline:3px solid var(--arancio);outline-offset:2px}
+
+  /* ---------- PIN ---------- */
+  #pin{position:fixed;inset:0;z-index:100;background:var(--latte);
+       display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px}
+  #pin h1{font-size:26px;margin:0;letter-spacing:-.4px}
+  #pin p{margin:0;color:var(--grigio);text-align:center;max-width:300px;font-size:15px}
+  #pinForm{display:flex;flex-direction:column;gap:12px;width:min(300px, 100%)}
+  #pinBtn{padding:14px}
+  #pinBtn:disabled{opacity:.6}
+  #pinInput{font-size:22px;letter-spacing:2px;text-align:center;width:100%;padding:14px 12px;
+    border:2px solid var(--linea);border-radius:14px;background:#fff;color:var(--inchiostro);outline:none}
+  #pinInput:focus{border-color:var(--arancio)}
+  #pinErr{color:var(--arancio-scuro);font-size:14px;min-height:18px}
+  .marchio{width:56px;height:56px;border-radius:16px;background:var(--arancio);display:grid;place-items:center}
+
+  /* ---------- Testata ---------- */
+  header{padding:12px max(16px, env(safe-area-inset-right,0px)) 10px max(16px, env(safe-area-inset-left,0px));
+    border-bottom:1px solid var(--linea);flex:none;background:var(--latte)}
+  .titolo{display:flex;align-items:baseline;gap:8px}
+  .titolo h1{font-size:19px;margin:0;letter-spacing:-.3px}
+  .titolo span{font-size:13px;color:var(--grigio)}
+  .filtri{display:flex;gap:8px;margin-top:10px}
+  .chip{flex:1;padding:9px 4px;border-radius:999px;border:1.5px solid var(--linea);background:#fff;
+    font-size:14px;font-weight:600;color:var(--grigio);cursor:pointer;white-space:nowrap}
+  .chip.on{background:var(--arancio);border-color:var(--arancio);color:var(--latte)}
+  .chip .n{font-variant-numeric:tabular-nums;opacity:.75;margin-left:3px}
+
+  /* ---------- Mappa ---------- */
+  #mappa{flex:1;position:relative;background:var(--acqua);overflow:hidden;touch-action:none;
+    user-select:none;-webkit-user-select:none;cursor:grab}
+  #mappa.con-citta{background:var(--terra)}
+  #mappa svg{width:100%;height:100%;display:block}
+  .molo{cursor:pointer}
+  .molo .area{stroke-width:1.6;vector-effect:non-scaling-stroke;transition:opacity .18s}
+  .molo.sel .area{stroke:var(--arancio) !important;stroke-width:3.2}
+  .molo.spento{opacity:.13;pointer-events:none}
+  .molo.fatto .area{fill-opacity:.32}
+  .et-molo{pointer-events:none}
+  .et-molo rect{fill:rgba(253,253,241,.94);stroke-width:1.2}
+  .et-molo text{font-size:13px;font-weight:700;fill:var(--inchiostro);text-anchor:middle;dominant-baseline:central}
+  .et-molo .sotto{font-size:10.5px;font-weight:600;fill:var(--grigio)}
+  .et-molo.sel rect{fill:var(--arancio);stroke:var(--arancio)}
+  .et-molo.sel text,.et-molo.sel .sotto{fill:#fff}
+  .et-molo.spento{display:none}
+  .et-varco text{font-size:11px;font-weight:700;fill:var(--arancio-scuro);text-anchor:middle;
+    paint-order:stroke;stroke:var(--terra);stroke-width:3.5px;stroke-linejoin:round}
+  .et-varco.princ text{font-size:12.5px}
+  .et-strada{fill:#8F877A;font-style:italic;paint-order:stroke;stroke:var(--terra);stroke-linejoin:round;
+    pointer-events:none;letter-spacing:.2px}
+
+  .legenda{position:absolute;left:max(10px, env(safe-area-inset-left,0px));bottom:10px;
+    background:rgba(253,253,241,.94);border:1px solid var(--linea);border-radius:11px;
+    padding:7px 10px;font-size:12px;color:var(--grigio);display:flex;flex-direction:column;gap:4px;
+    box-shadow:var(--ombra);pointer-events:none}
+  .legenda span{display:flex;align-items:center;gap:7px}
+  .leg-varco{width:11px;height:11px;border-radius:50%;background:var(--arancio);border:2px solid #fff;
+    box-shadow:0 0 0 1px var(--arancio)}
+  .leg-chiuso{width:14px;height:10px;border-radius:3px;border:1px solid #9C968B;
+    background:repeating-linear-gradient(135deg,#D9D5CB 0 3px,#F1EFE8 3px 6px)}
+  .comandi{position:absolute;right:max(12px, env(safe-area-inset-right,0px));bottom:12px;
+    display:flex;flex-direction:column;gap:7px}
+  .comandi button{width:44px;height:44px;border-radius:12px;border:1px solid var(--linea);background:#fff;
+    font-size:21px;font-weight:600;color:var(--inchiostro);box-shadow:var(--ombra);cursor:pointer;
+    display:grid;place-items:center}
+  .credito{position:absolute;right:max(64px, calc(env(safe-area-inset-right,0px) + 64px));bottom:6px;
+    font-size:9.5px;color:#A39C90;pointer-events:none}
+
+  /* ---------- Schede ---------- */
+  #carosello{flex:none;display:flex;gap:10px;overflow-x:auto;
+    padding:12px max(16px, env(safe-area-inset-right,0px)) 14px max(16px, env(safe-area-inset-left,0px));
+    scroll-snap-type:x mandatory;scroll-padding-inline:16px;border-top:1px solid var(--linea);background:var(--latte)}
+  #carosello::-webkit-scrollbar{display:none}
+  .card{scroll-snap-align:center;flex:0 0 76%;max-width:320px;background:#fff;border:1.5px solid var(--linea);
+    border-radius:16px;padding:11px 12px 12px;box-shadow:var(--ombra);cursor:pointer;
+    display:flex;flex-direction:column;gap:3px;transition:border-color .15s, transform .15s, box-shadow .15s}
+  .card[hidden]{display:none}
+  .card.sel{border-color:var(--arancio);box-shadow:0 0 0 3px rgba(236,94,39,.18), var(--ombra);transform:translateY(-2px)}
+  .card .testa{display:flex;align-items:center;gap:8px;min-height:18px}
+  .pastiglia{width:26px;height:10px;border-radius:999px;flex:none}
+  .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:#ECE9E1;color:#6F6A61}
+  .badge.ok{background:#EAF2EA;color:var(--verde)}
+  .card h3{margin:0;font-size:16.5px;letter-spacing:-.2px}
+  .card .moli{margin:0;font-size:13px;color:var(--grigio);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .vai{margin-top:8px}
+  .card .breve{margin:4px 0 0;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--inchiostro)}
+  .card .breve .modo-ico{display:grid;place-items:center;color:var(--arancio-scuro)}
+
+  .accesso-box{margin:14px 0 0;background:#fff;border:1.5px solid var(--linea);border-radius:14px;
+    padding:12px 13px;display:flex;flex-direction:column;gap:11px}
+  .accesso-box h4{margin:0;font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--grigio)}
+  .accesso-voce{display:flex;gap:11px;align-items:flex-start}
+  .accesso-voce > div{min-width:0}
+  .accesso-voce b{font-size:15px}
+  .accesso-voce p{margin:3px 0 0;font-size:14.5px;line-height:1.45}
+  .modo{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center}
+  .modo-auto{background:rgba(236,94,39,.12);color:var(--arancio-scuro)}
+  .modo-piedi{background:#EAF2EA;color:var(--verde)}
+  .modo-navetta{background:#E6EEF6;color:#3B5F86}
+  .tag-modo{font-size:12px;font-weight:700;color:var(--grigio);margin-left:4px}
+  .contatto{display:flex;gap:11px;align-items:center;text-decoration:none;color:var(--inchiostro);
+    border-top:1px solid var(--linea);padding-top:11px}
+  .contatto b{display:block;font-size:15px}
+  .contatto .num{display:block;font-size:16px;font-weight:700;color:var(--arancio-scuro);
+    font-variant-numeric:tabular-nums;user-select:text;-webkit-user-select:text}
+  .modo-tel{background:rgba(236,94,39,.12);color:var(--arancio-scuro)}
+  .card.chiuso{background:#FAF9F5}
+  .card.chiuso h3{color:#6F6A61}
+
+  .bottone{display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;border-radius:13px;
+    font-size:15px;font-weight:700;border:none;cursor:pointer;text-decoration:none;text-align:center}
+  .b-primario{background:var(--arancio);color:var(--latte)}
+  .b-primario svg{flex:none}
+  .b-secondario{background:#fff;color:var(--inchiostro);border:1.5px solid var(--linea)}
+  .b-stato{background:#fff;color:var(--inchiostro);border:1.5px solid var(--arancio)}
+  .b-stato.fatto{background:#EEF4EE;border-color:#B9D2BC;color:var(--verde)}
+  .b-stato:disabled{border-color:var(--linea);color:#A39C90;cursor:default}
+  .card .vai.bottone{padding:10px}
+
+  /* ---------- Scheda di dettaglio ---------- */
+  #velo{position:fixed;inset:0;background:rgba(42,36,31,.35);opacity:0;pointer-events:none;transition:opacity .22s;z-index:40}
+  #velo.on{opacity:1;pointer-events:auto}
+  #scheda{position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--latte);
+    border-radius:22px 22px 0 0;box-shadow:0 -6px 28px rgba(42,36,31,.22);
+    transform:translateY(102%);transition:transform .26s cubic-bezier(.3,.8,.4,1);
+    max-height:85vh;max-height:calc(100dvh - 64px);overflow-y:auto;overscroll-behavior:contain;
+    padding:0 max(18px, env(safe-area-inset-right,0px)) calc(22px + env(safe-area-inset-bottom,0px)) max(18px, env(safe-area-inset-left,0px))}
+  #scheda.on{transform:translateY(0)}
+  #scheda.trascina{transition:none}
+  /* testa della scheda: resta in cima mentre si scorre */
+  .testa-scheda{position:sticky;top:0;z-index:2;background:var(--latte);
+    margin:0 calc(-1 * max(18px, env(safe-area-inset-right,0px))) 0 calc(-1 * max(18px, env(safe-area-inset-left,0px)));
+    padding:4px max(10px, env(safe-area-inset-right,0px)) 2px max(10px, env(safe-area-inset-left,0px));
+    display:flex;align-items:center;justify-content:center;min-height:44px;touch-action:none;cursor:grab}
+  .maniglia{width:42px;height:5px;border-radius:9px;background:#D6D1C2}
+  .chiudi-scheda{position:absolute;right:max(10px, env(safe-area-inset-right,0px));top:4px;
+    width:40px;height:40px;border-radius:12px;border:1px solid var(--linea);background:#fff;
+    color:var(--inchiostro);display:grid;place-items:center;cursor:pointer;box-shadow:var(--ombra)}
+  #scheda .barra{height:8px;border-radius:999px;margin:8px 0 12px}
+  #scheda h2{margin:0;font-size:22px;letter-spacing:-.4px}
+  #scheda .sub{margin:2px 0 0;color:var(--grigio);font-size:14px}
+  .riga{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid var(--linea);font-size:14.5px}
+  .riga .et{flex:0 0 86px;color:var(--grigio);font-size:13px;padding-top:1px}
+  .riga > div:last-child{min-width:0;overflow-wrap:anywhere}
+  .riga a{color:var(--arancio-scuro);text-decoration:none;font-weight:600}
+  .nota{margin:12px 0 0;background:#fff;border:1px solid var(--linea);border-radius:12px;
+    padding:10px 12px;font-size:13.5px;color:var(--grigio)}
+  .nota b{color:var(--inchiostro)}
+  .nota.attenzione{background:rgba(236,94,39,.08);border-color:rgba(236,94,39,.3);color:var(--arancio-scuro)}
+  .nota.chiuso{background:#ECE9E1;border-color:#D9D5CB;color:#5E5950}
+  .azioni{display:flex;flex-direction:column;gap:9px;margin-top:16px}
+  .davarco{display:flex;flex-direction:column;gap:7px;background:#fff;border:1px solid var(--linea);border-radius:14px;padding:11px}
+  .davarco label{font-size:13px;color:var(--grigio)}
+  .davarco select{width:100%;padding:11px 10px;border-radius:11px;border:1.5px solid var(--linea);background:var(--latte);
+    color:var(--inchiostro);font-size:15px}
+  .piede{margin:16px 0 0;font-size:11.5px;color:var(--grigio);text-align:center;line-height:1.5}
+  #vuoto{padding:16px max(16px, env(safe-area-inset-right,0px)) 18px max(16px, env(safe-area-inset-left,0px));
+    border-top:1px solid var(--linea);display:flex;flex-direction:column;align-items:center;gap:10px;background:var(--latte)}
+  #vuoto p{margin:0;text-align:center;color:var(--grigio);font-size:14.5px;max-width:34ch}
+  #vuoto .bottone{padding:11px 18px}
+
+  /* riga in fondo alla scheda: percorso + azione sulla lista */
+  .card .riga-az{display:flex;gap:8px;margin-top:8px}
+  .card .riga-az .vai{flex:1;margin:0;min-width:0}
+  .az{flex:none;min-width:48px;height:44px;border-radius:13px;border:1.5px solid var(--arancio);background:#fff;
+    color:var(--arancio-scuro);font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;
+    gap:6px;padding:0 12px;cursor:pointer}
+  .az.in-lista{background:rgba(236,94,39,.1)}
+  .az.spunta{border-color:#B9D2BC;background:#EEF4EE;color:var(--verde)}
+  .az .casella{width:20px;height:20px;border-radius:6px;border:2px solid currentColor;display:grid;place-items:center}
+  .card .riga-az .vai{white-space:nowrap;padding-inline:10px}
+  .card.da-fare-vista .az{padding:0 14px}
+  .card.ricomincia{justify-content:center;align-items:center;text-align:center;gap:10px;border-style:dashed;box-shadow:none;background:transparent;cursor:default}
+  .card.ricomincia p{margin:0;font-size:13.5px;color:var(--grigio)}
+
+  #giro{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:7px max(16px, env(safe-area-inset-right,0px)) 7px max(16px, env(safe-area-inset-left,0px));
+    border-top:1px solid var(--linea);background:var(--latte);font-size:13px;color:var(--grigio)}
+  #giroTesto{min-width:0}
+  .spunta72{display:flex;align-items:center;gap:7px;font-weight:600;color:var(--inchiostro);white-space:nowrap;cursor:pointer}
+  .spunta72 input{width:20px;height:20px;margin:0;accent-color:var(--arancio)}
+  #toast{position:fixed;left:50%;transform:translateX(-50%);z-index:60;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 168px);
+    background:var(--inchiostro);color:var(--latte);border-radius:14px;padding:10px 10px 10px 16px;
+    display:flex;align-items:center;gap:14px;font-size:14.5px;box-shadow:0 6px 22px rgba(42,36,31,.3);
+    width:max-content;max-width:calc(100% - 32px)}
+  #toast button{background:transparent;border:none;color:#FFB08F;font-weight:700;font-size:14.5px;padding:6px 8px;cursor:pointer}
+
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important} }
+</style>
+</head>
+<body>
+
+<div id="pin">
+  <div class="marchio" aria-hidden="true">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#FDFDF1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><path d="M12 7.2V21M5 13a7 7 0 0 0 14 0M8.5 10.5h7"/></svg>
+  </div>
+  <h1>Moli del porto</h1>
+  <p>Inserisci il codice per aprire la mappa.</p>
+  <form id="pinForm" autocomplete="off">
+    <input id="pinInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"
+           spellcheck="false" enterkeyhint="go" aria-label="Codice">
+    <button id="pinBtn" class="bottone b-primario" type="submit">Entra</button>
+  </form>
+  <p id="pinErr" role="alert"></p>
+</div>
+
+<header>
+  <div class="titolo">
+    <h1>Moli del porto</h1>
+    <span>Sampierdarena</span>
+  </div>
+  <div class="filtri" role="group" aria-label="Filtra i terminal">
+    <button class="chip on" data-f="tutti">Tutti<span class="n" id="nTutti"></span></button>
+    <button class="chip" data-f="da_fare">Da visitare<span class="n" id="nDaFare"></span></button>
+    <button class="chip" data-f="fatti">Visitati<span class="n" id="nFatti"></span></button>
+  </div>
+</header>
+
+<div id="mappa">
+  <svg id="svg" role="img" aria-label="Mappa dei moli del porto di Genova"></svg>
+  <div class="legenda" aria-hidden="true">
+    <span><i class="leg-varco"></i>Varchi di accesso</span>
+    <span><i class="leg-chiuso"></i>Non agibile</span>
+  </div>
+  <div class="comandi">
+    <button id="zPiu" aria-label="Ingrandisci">+</button>
+    <button id="zMeno" aria-label="Riduci">−</button>
+    <button id="zCasa" aria-label="Torna al porto">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    </button>
+  </div>
+  <div class="credito">© OpenStreetMap</div>
+</div>
+
+<div id="giro" hidden>
+  <span id="giroTesto"></span>
+  <label class="spunta72"><input type="checkbox" id="giro72"> Mantieni 72 ore</label>
+</div>
+<div id="carosello"></div>
+<div id="vuoto" hidden>
+  <p id="vuotoTesto"></p>
+  <button id="vuotoBtn" class="bottone b-secondario" hidden></button>
+</div>
+<div id="toast" role="status" hidden><span id="toastTesto"></span><button id="toastBtn">Annulla</button></div>
+
+<div id="velo"></div>
+<section id="scheda" aria-live="polite"></section>
+
+<script src="dati.enc.js"></script>
+<script src="contesto.js"></script>
+<script>
+/* ===================== PORTA =====================
+   I dati della mappa sono cifrati (dati.enc.js). Il codice inserito serve a
+   ricavare la chiave che li decifra qui, sul telefono: il codice non e'
+   scritto da nessuna parte. Per non chiederlo a ogni apertura, la chiave
+   ricavata resta sul telefono finche' l'app viene usata (20 minuti di
+   inattivita' e si cancella). */
+(function(){
+  "use strict";
+  var CHIAVE_KEY = "porto_chiave_v1", CHIAVE_USO = "porto_ultimo_uso_v1", CHIAVE_MIN = "porto_blocco_min_v1";
+  var D = window.DATI_CIFRATI;
+  var form = document.getElementById("pinForm"), inp = document.getElementById("pinInput");
+  var btn = document.getElementById("pinBtn"), err = document.getElementById("pinErr");
+  var elPin = document.getElementById("pin");
+  var avviata = false;
+
+  function ls(k, v){ try{ if(v === undefined) return localStorage.getItem(k); if(v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }catch(e){ return null; } }
+  function daB64(s){ var b = atob(s), u = new Uint8Array(b.length); for(var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+  function aB64(buf){ var u = new Uint8Array(buf), s = ""; for(var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); }
+
+  function chiaveDaCodice(codice){
+    return crypto.subtle.importKey("raw", new TextEncoder().encode(codice), "PBKDF2", false, ["deriveKey"])
+      .then(function(base){
+        return crypto.subtle.deriveKey({ name: "PBKDF2", salt: daB64(D.salt), iterations: D.iter, hash: "SHA-256" },
+          base, { name: "AES-GCM", length: 256 }, true, ["decrypt"]);
+      });
+  }
+  // la decifratura puo' finire prima che il resto della pagina sia caricato
+  function paginaPronta(){
+    return new Promise(function(ok){
+      if(document.readyState !== "loading") ok();
+      else document.addEventListener("DOMContentLoaded", function(){ ok(); }, { once: true });
+    });
+  }
+  function apriCon(chiave){
+    var testo;
+    return crypto.subtle.decrypt({ name: "AES-GCM", iv: daB64(D.iv) }, chiave, daB64(D.ct))
+      .then(function(buf){ testo = buf; return paginaPronta(); })
+      .then(function(){
+        var buf = testo;
+        if(!avviata){
+          (new Function(new TextDecoder().decode(buf)))();   // definisce CONFIG, VARCHI, SFONDO, TERMINAL
+          avviata = true;
+          window.avviaApp();
+        }else if(window.sbloccaApp){
+          window.sbloccaApp();
+        }
+        return crypto.subtle.exportKey("raw", chiave);
+      })
+      .then(function(raw){ ls(CHIAVE_KEY, aB64(raw)); });
+  }
+
+  // chiamata dall'app quando scatta il blocco per inattivita'
+  window.PORTA = { dimentica: function(){ ls(CHIAVE_KEY, null); } };
+
+  form.addEventListener("submit", function(e){
+    e.preventDefault();
+    var codice = inp.value;
+    if(!codice) return;
+    err.textContent = ""; btn.disabled = true; btn.textContent = "Verifica…";
+    chiaveDaCodice(codice).then(apriCon).then(function(){
+      inp.value = ""; btn.disabled = false; btn.textContent = "Entra";
+    }).catch(function(){
+      btn.disabled = false; btn.textContent = "Entra";
+      err.textContent = "Codice non corretto, riprova."; inp.value = ""; try{ inp.focus(); }catch(e2){}
+    });
+  });
+
+  if(!window.crypto || !crypto.subtle || !D){
+    err.textContent = "Questo browser non riesce ad aprire la mappa. Prova con Safari o Chrome aggiornati.";
+    btn.disabled = true;
+    return;
+  }
+
+  // usata di recente su questo telefono: si riapre senza codice
+  var min = Number(ls(CHIAVE_MIN)) || 20;
+  var ultimo = Number(ls(CHIAVE_USO)) || 0;
+  var salvata = ls(CHIAVE_KEY);
+  if(salvata && Date.now() - ultimo <= min * 60 * 1000){
+    elPin.hidden = true;
+    crypto.subtle.importKey("raw", daB64(salvata), { name: "AES-GCM" }, true, ["decrypt"])
+      .then(apriCon)
+      .catch(function(){ ls(CHIAVE_KEY, null); elPin.hidden = false; });
+  }else{
+    ls(CHIAVE_KEY, null);
+    setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 300);
+  }
+})();
+</script>
+<script>
+window.avviaApp = function(){
+(function(){
+  "use strict";
+
+  var CHIAVE_STATO = "porto_stato_v1";
+  var CHIAVE_VARCO = "porto_varco_v1";
+
+  function leggi(c, d){ try{ var v = localStorage.getItem(c); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
+  function scrivi(c, v){ try{ localStorage.setItem(c, JSON.stringify(v)); }catch(e){} }
+
+  var tutti   = window.TERMINAL;
+  var varchi  = window.VARCHI || [];
+  var C       = window.CONTESTO || null;
+  var stato   = leggi(CHIAVE_STATO, {});
+
+  /* Il giro: parte quando si segna il primo molo e si azzera da solo dopo
+     24 ore, oppure 72 se e' spuntato "Mantieni 72 ore". */
+  var CHIAVE_GIRO = "porto_giro_v1";
+  var ORA = 60 * 60 * 1000;
+  var giro = leggi(CHIAVE_GIRO, null);          // { inizio: ms, lungo: true/false }
+  function durataGiro(){ return (giro && giro.lungo ? 72 : 24) * ORA; }
+  function salvaStato(){
+    var pieno = Object.keys(stato).length > 0;
+    if(pieno && !giro) giro = { inizio: Date.now(), lungo: false };
+    if(!pieno) giro = null;
+    scrivi(CHIAVE_STATO, stato);
+    scrivi(CHIAVE_GIRO, giro);
+  }
+  // stato salvato con una versione precedente, senza data: il giro parte ora
+  if(Object.keys(stato).length && !giro){ giro = { inizio: Date.now(), lungo: false }; scrivi(CHIAVE_GIRO, giro); }
+  function giroScaduto(){ return giro && Date.now() > giro.inizio + durataGiro(); }
+  if(giroScaduto()){ stato = {}; giro = null; scrivi(CHIAVE_STATO, stato); scrivi(CHIAVE_GIRO, null); }
+  var filtro  = "tutti";
+  var selId   = null;
+
+  var principale = varchi.filter(function(v){ return v.principale; })[0] || varchi[0];
+  var varcoScelto = leggi(CHIAVE_VARCO, principale ? principale.id : null);
+
+  function agibile(t){ return t.agibile !== false; }
+  /* Stato di ogni molo, solo su questo telefono:
+     nessuno  -> non scelto
+     "lista"  -> scelto, da visitare
+     "fatto"  -> visitato */
+  function eFatto(t){ return stato[t.id] === "fatto"; }
+  function inLista(t){ return stato[t.id] === "lista" && agibile(t); }
+  function imposta(t, valore){
+    if(valore) stato[t.id] = valore; else delete stato[t.id];
+    salvaStato();
+    aggiornaTutto();
+  }
+  function visibile(t){
+    if(filtro === "da_fare") return inLista(t);
+    if(filtro === "fatti")   return eFatto(t);
+    return true;
+  }
+
+  /* avviso in basso con "Annulla" */
+  var toastTimer = null;
+  function avvisa(testo, annulla){
+    var el = document.getElementById("toast");
+    document.getElementById("toastTesto").textContent = testo;
+    var b = document.getElementById("toastBtn");
+    b.hidden = !annulla;
+    b.onclick = function(){ el.hidden = true; if(annulla) annulla(); };
+    // sempre appena sopra le schede in basso
+    // sopra la cosa piu' alta tra riga del giro, schede ed elenco vuoto
+    var cima = window.innerHeight;
+    ["giro", "carosello", "vuoto"].forEach(function(id){
+      var x = document.getElementById(id);
+      if(x && !x.hidden) cima = Math.min(cima, x.getBoundingClientRect().top);
+    });
+    el.style.bottom = (window.innerHeight - cima + 12) + "px";
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ el.hidden = true; }, 5000);
+  }
+  function trova(id){ return tutti.filter(function(x){ return x.id === id; })[0]; }
+  function linkGPS(t){
+    return "https://www.google.com/maps/dir/?api=1&destination=" + t.ingresso.lat + "," + t.ingresso.lon + "&travelmode=driving";
+  }
+  function linkDaVarco(t, v){
+    return "https://www.google.com/maps/dir/?api=1&origin=" + v.lat + "," + v.lon +
+           "&destination=" + t.ingresso.lat + "," + t.ingresso.lon + "&travelmode=driving";
+  }
+  var ICONE_MODO = {
+    auto:    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14v-5l-2-5H7l-2 5v5z"/><path d="M5 12h14"/><circle cx="8" cy="17" r="1.6"/><circle cx="16" cy="17" r="1.6"/></svg>',
+    piedi:   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="1.8"/><path d="M10 21l2-6 3 3v3M9 12l2-4 4 2 2 3M11 8l-3 1-1 3"/></svg>',
+    navetta: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="13" rx="2"/><path d="M4 11h16M8 21v-4M16 21v-4"/></svg>'
+  };
+  var ICONA_TEL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>';
+  var ICONA_VAI = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>';
+
+  /* ================= PIN ================= */
+  var elPin = document.getElementById("pin");
+  var inPin = document.getElementById("pinInput");
+  var erPin = document.getElementById("pinErr");
+  /* Il PIN resta valido finche' l'app viene usata. Dopo CONFIG.minutiBlocco
+     minuti senza tocchi (anche con l'app chiusa o il telefono in tasca)
+     lo richiede. Lista e visitati non si perdono. */
+  var CHIAVE_ATTIVITA = "porto_ultimo_uso_v1";
+  var MIN_BLOCCO = Number(window.CONFIG.minutiBlocco) || 20;
+  var MS_BLOCCO = MIN_BLOCCO * 60 * 1000;
+  scrivi("porto_blocco_min_v1", MIN_BLOCCO);
+  var avviato = false, ultimoSalvataggio = 0;
+
+  function segnaUso(subito){
+    var ora = Date.now();
+    if(subito || ora - ultimoSalvataggio > 15000){ scrivi(CHIAVE_ATTIVITA, ora); ultimoSalvataggio = ora; }
+  }
+  function scaduto(){ return Date.now() - Number(leggi(CHIAVE_ATTIVITA, 0)) > MS_BLOCCO; }
+
+  function chiediPin(){
+    if(window.PORTA) window.PORTA.dimentica();
+    inPin.value = ""; erPin.textContent = "";
+    elPin.hidden = false;
+    try{ chiudi(); }catch(e){}
+    setTimeout(function(){ try{ inPin.focus(); }catch(e){} }, 300);
+  }
+  function sblocca(){
+    elPin.hidden = true;
+    segnaUso(true);
+    if(!avviato){ avviato = true; avvia(); }
+  }
+  // la porta richiama l'app quando il codice e' giusto
+  window.sbloccaApp = sblocca;
+
+  // ogni tocco, scorrimento o tasto conta come uso
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach(function(ev){
+    document.addEventListener(ev, function(){ if(elPin.hidden) segnaUso(false); }, { passive: true, capture: true });
+  });
+  // l'app lasciata aperta: si controlla ogni 20 secondi e al ritorno sullo schermo
+  function controllaBlocco(){ if(elPin.hidden && avviato && scaduto()) chiediPin(); }
+  setInterval(controllaBlocco, 20000);
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible") controllaBlocco();
+    else if(elPin.hidden) segnaUso(true);
+  });
+  window.addEventListener("pageshow", controllaBlocco);
+
+  // l'app viene avviata dalla porta solo dopo la decifratura: si parte subito
+  var pinRicordato = true;
+
+  /* ================= PROIEZIONE ================= */
+  // L'inquadratura iniziale e' il porto; la citta' intorno si vede spostando la mappa.
+  var punti = [];
+  tutti.forEach(function(t){ t.perimetri.forEach(function(p){ punti = punti.concat(p); }); });
+  (window.SFONDO || []).forEach(function(p){ punti = punti.concat(p); });
+  var latMin = Math.min.apply(null, punti.map(function(p){ return p[0]; }));
+  var latMax = Math.max.apply(null, punti.map(function(p){ return p[0]; }));
+  var lonMin = Math.min.apply(null, punti.map(function(p){ return p[1]; }));
+  var lonMax = Math.max.apply(null, punti.map(function(p){ return p[1]; }));
+  var kLon = Math.cos(((latMin + latMax) / 2) * Math.PI / 180);
+  function px(l){ return (l - lonMin) * kLon * 100000; }
+  function py(l){ return (latMax - l) * 100000; }
+  var larg = px(lonMax), alt = py(latMin), bordo = Math.max(larg, alt) * 0.05;
+
+  // coordinate compatte del contesto: [dlat, dlon] * 1e5 rispetto a una base
+  function dec(p){ return [C.base[0] + p[0] / 1e5, C.base[1] + p[1] / 1e5]; }
+
+  /* ================= SVG ================= */
+  var svg = document.getElementById("svg");
+  var mappaEl = document.getElementById("mappa");
+  var NS = "http://www.w3.org/2000/svg";
+  var gRoot, gEtStrade, gEtichette;
+  var scala = 1, dx = 0, dy = 0;
+  var etStrade = [];   // { el, cls, len, testo }
+
+  function tag(n, a){ var e = document.createElementNS(NS, n); for(var k in a){ e.setAttribute(k, a[k]); } return e; }
+  function traccia(p, chiudi, decodifica){
+    return p.map(function(c, i){
+      if(decodifica) c = dec(c);
+      return (i ? "L" : "M") + px(c[1]).toFixed(1) + " " + py(c[0]).toFixed(1);
+    }).join(" ") + (chiudi ? " Z" : "");
+  }
+  function media(a){ return a.reduce(function(s, v){ return s + v; }, 0) / a.length; }
+  function scurisci(hex, f){
+    var n = parseInt(hex.slice(1), 16);
+    return "rgb(" + Math.round(((n>>16)&255)*f) + "," + Math.round(((n>>8)&255)*f) + "," + Math.round((n&255)*f) + ")";
+  }
+  function upp(){
+    var r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+    if(!r.width || !r.height) return 1;
+    return Math.max(vb.width / r.width, vb.height / r.height);
+  }
+
+  function avvia(){
+    disegna();
+    costruisciCarosello();
+    aggiornaTutto();
+    window.addEventListener("resize", programmaVista);
+  }
+
+  function disegna(){
+    svg.innerHTML = "";
+    svg.setAttribute("viewBox", (-bordo) + " " + (-bordo) + " " + (larg + bordo*2) + " " + (alt + bordo*2));
+
+    var defs = tag("defs", {});
+    var pat = tag("pattern", { id: "tratteggio", width: 7, height: 7, patternUnits: "userSpaceOnUse",
+                               patternTransform: "rotate(45)" });
+    pat.appendChild(tag("rect", { width: 7, height: 7, fill: "#F1EFE8" }));
+    pat.appendChild(tag("rect", { width: 3, height: 7, fill: "#D9D5CB" }));
+    defs.appendChild(pat);
+    svg.appendChild(defs);
+
+    gRoot = tag("g", {});
+    svg.appendChild(gRoot);
+
+    // --- citta' e mare ---
+    if(C && C.mare){
+      mappaEl.classList.add("con-citta");
+      C.mare.forEach(function(anelli){
+        gRoot.appendChild(tag("path", { d: anelli.map(function(a){ return traccia(a, true, true); }).join(" "),
+          fill: "#DCE7EA", "fill-rule": "evenodd" }));
+      });
+    }
+    if(C && C.fiumi){
+      C.fiumi.forEach(function(f){
+        gRoot.appendChild(tag("path", { d: traccia(f.g, f.area, true),
+          fill: f.area ? "#DCE7EA" : "none", stroke: f.area ? "none" : "#C9DADF",
+          "stroke-width": 3, "vector-effect": "non-scaling-stroke" }));
+      });
+    }
+    (window.SFONDO || []).forEach(function(p){
+      gRoot.appendChild(tag("path", { d: traccia(p, true), fill: "#EEEADB", stroke: "#E2DDCC",
+        "stroke-width": 1, "vector-effect": "non-scaling-stroke" }));
+    });
+    if(C && C.strade){
+      var spessori = { 1: 3.2, 2: 2.4, 3: 1.8, 4: 1.1 };
+      var colori   = { 1: "#D8D1BF", 2: "#DFD9C9", 3: "#E4DFD1", 4: "#E8E3D6" };
+      // le strade minori sotto, le maggiori sopra
+      [4, 3, 2, 1].forEach(function(cl){
+        C.strade.forEach(function(s){
+          if(s[0] !== cl) return;
+          var a = { d: traccia(s[3], false, true), fill: "none", stroke: colori[cl],
+            "stroke-width": spessori[cl], "stroke-linecap": "round", "stroke-linejoin": "round",
+            "vector-effect": "non-scaling-stroke" };
+          if(s[2]) { a["stroke-dasharray"] = "4 3"; a.opacity = .7; }
+          gRoot.appendChild(tag("path", a));
+        });
+      });
+      gEtStrade = tag("g", {});
+      gRoot.appendChild(gEtStrade);
+      preparaNomiStrade();
+    }
+
+    // --- terminal ---
+    tutti.forEach(function(t){
+      var g = tag("g", { "class": "molo", "data-id": t.id });
+      t.perimetri.forEach(function(p){
+        var chiuso = !agibile(t);
+        g.appendChild(tag("path", { "class": "area", d: traccia(p, true),
+          fill: chiuso ? "url(#tratteggio)" : t.colore,
+          stroke: chiuso ? "#9C968B" : scurisci(t.colore, .58) }));
+      });
+      gRoot.appendChild(g);
+    });
+
+    // --- strade interne al porto: sopra i terminal, per seguire il percorso dai varchi ---
+    if(C && C.interne && C.interne.length){
+      var gInt = tag("g", { "pointer-events": "none", "class": "strade-interne" });
+      [["#B9B1A0", 4.2], ["#FFFFFF", 2.4]].forEach(function(st){
+        C.interne.forEach(function(s){
+          gInt.appendChild(tag("path", { d: traccia(s[1], false, true), fill: "none", stroke: st[0],
+            "stroke-width": st[1], "stroke-linecap": "round", "stroke-linejoin": "round",
+            "vector-effect": "non-scaling-stroke" }));
+        });
+      });
+      gRoot.appendChild(gInt);
+    }
+
+    // --- varchi ---
+    gEtichette = tag("g", {});
+    gRoot.appendChild(gEtichette);
+    varchi.forEach(function(v){
+      var g = tag("g", { "class": "et-varco" + (v.principale ? " princ" : ""), "data-x": px(v.lon), "data-y": py(v.lat) });
+      var r = v.principale ? 7 : 5;
+      g.appendChild(tag("circle", { r: r, fill: "#EC5E27", stroke: "#fff", "stroke-width": 2.2 }));
+      if(v.principale) g.appendChild(tag("circle", { r: r + 4, fill: "none", stroke: "#EC5E27", "stroke-width": 1.5, opacity: .5 }));
+      var t = tag("text", { y: -(r + 7) });
+      t.textContent = v.nome;
+      g.appendChild(t);
+      gEtichette.appendChild(g);
+    });
+
+    // --- nomi dei terminal: pillole sempre leggibili ---
+    tutti.forEach(function(t){
+      var grande = t.perimetri.slice().sort(function(a, b){ return b.length - a.length; })[0];
+      var g = tag("g", { "class": "et-molo", "data-id": t.id,
+        "data-x": media(grande.map(function(c){ return px(c[1]); })),
+        "data-y": media(grande.map(function(c){ return py(c[0]); })) });
+      var r = tag("rect", { rx: 9, ry: 9, stroke: agibile(t) ? scurisci(t.colore, .7) : "#9C968B" });
+      var n = tag("text", { x: 0, y: 0 }); n.textContent = t.nome;
+      var s = tag("text", { "class": "sotto", x: 0, y: 15 });
+      g.appendChild(r); g.appendChild(n); g.appendChild(s);
+      gEtichette.appendChild(g);
+    });
+
+    vistaIniziale();
+  }
+
+  function dimensionaPillola(g){
+    var testi = g.querySelectorAll("text");
+    var w = 0;
+    for(var i = 0; i < testi.length; i++){
+      if(testi[i].textContent) w = Math.max(w, testi[i].getComputedTextLength());
+    }
+    var due = !!testi[1].textContent;
+    testi[0].setAttribute("y", due ? -7 : 0);
+    testi[1].setAttribute("y", 8);
+    var r = g.querySelector("rect");
+    var h = due ? 36 : 24;
+    r.setAttribute("x", -(w/2 + 9)); r.setAttribute("width", w + 18);
+    r.setAttribute("y", -h/2);       r.setAttribute("height", h);
+  }
+
+  /* ---------- nomi delle strade ---------- */
+  function preparaNomiStrade(){
+    // per ogni nome, il tratto piu' lungo
+    var migliori = {};
+    var tutte = C.strade.concat((C.interne || []).filter(function(s){ return s[0]; })
+      .map(function(s){ return [3, s[0], 0, s[1]]; }));
+    tutte.forEach(function(s){
+      if(!s[1] || s[2]) return;
+      // una via puo' andare e tornare (due carreggiate unite): il nome va
+      // sul tratto piu' lungo che procede sempre nello stesso verso,
+      // altrimenti a meta' percorso la scritta si capovolge
+      var pts = s[3].map(dec);
+      var tratto = [pts[0]], verso = 0, len = 0;
+      function chiudiTratto(){
+        if(tratto.length > 1 && (!migliori[s[1]] || migliori[s[1]].len < len))
+          migliori[s[1]] = { len: len, pts: tratto.slice(), cls: s[0] };
+      }
+      for(var k = 1; k < pts.length; k++){
+        var ax = px(pts[k-1][1]), ay = py(pts[k-1][0]), bx = px(pts[k][1]), by = py(pts[k][0]);
+        var v = bx - ax > 0.5 ? 1 : (bx - ax < -0.5 ? -1 : 0);
+        if(v && verso && v !== verso){ chiudiTratto(); tratto = [pts[k-1]]; len = 0; }
+        if(v) verso = v;
+        tratto.push(pts[k]);
+        len += Math.sqrt((bx-ax)*(bx-ax) + (by-ay)*(by-ay));
+      }
+      chiudiTratto();
+    });
+    var n = 0;
+    Object.keys(migliori).forEach(function(nome){
+      var m = migliori[nome];
+      var pts = m.pts;
+      if(pts[0][1] > pts[pts.length-1][1]) pts = pts.slice().reverse();  // testo mai capovolto
+      var id = "s" + (n++);
+      var p = tag("path", { id: id, d: traccia(pts, false), fill: "none", stroke: "none" });
+      gEtStrade.appendChild(p);
+      var t = tag("text", { "class": "et-strada", dy: "3.5" });
+      var tp = tag("textPath", { href: "#" + id, startOffset: "50%", "text-anchor": "middle" });
+      tp.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "#" + id);
+      tp.textContent = nome;
+      t.appendChild(tp);
+      gEtStrade.appendChild(t);
+      etStrade.push({ el: t, cls: m.cls, len: m.len, chars: nome.length });
+    });
+  }
+
+  /* ================= VISTA, ZOOM, SPOSTAMENTO ================= */
+  var inAttesa = false;
+  function programmaVista(){
+    if(inAttesa) return;
+    inAttesa = true;
+    requestAnimationFrame(function(){ inAttesa = false; aggiornaVista(); });
+  }
+
+  function aggiornaVista(){
+    gRoot.setAttribute("transform", "translate(" + dx + "," + dy + ") scale(" + scala + ")");
+    var u = upp() / scala;   // unita' della mappa per un pixel dello schermo
+    var et = gEtichette.querySelectorAll("[data-x]");
+    for(var i = 0; i < et.length; i++){
+      et[i].setAttribute("transform", "translate(" + et[i].getAttribute("data-x") + "," +
+        et[i].getAttribute("data-y") + ") scale(" + u + ")");
+    }
+    evitaSovrapposizioni();
+    if(etStrade.length){
+      var soglia = { 1: 0, 2: 0, 3: 1.6, 4: 2.6 };
+      etStrade.forEach(function(s){
+        var schermo = s.len / u;                  // lunghezza del tratto in pixel
+        var serve = s.chars * 11 * 0.55 + 24;     // spazio che serve al nome
+        var mostra = scala >= soglia[s.cls] && schermo > serve;
+        s.el.style.display = mostra ? "" : "none";
+        if(mostra){
+          s.el.style.fontSize = (11 * u).toFixed(3) + "px";
+          s.el.style.strokeWidth = (3 * u).toFixed(3) + "px";
+          s.el.setAttribute("dy", (3.8 * u).toFixed(3));
+        }
+      });
+    }
+  }
+
+  /* Quando due scritte si toccano resta la piu' importante:
+     prima il terminal selezionato, poi i terminal agibili dal piu' grande,
+     poi l'Entrata Marittima, poi gli altri varchi. Le altre ricompaiono ingrandendo. */
+  function evitaSovrapposizioni(){
+    var lista = [];
+    var et = gEtichette.querySelectorAll(".et-molo");
+    for(var i = 0; i < et.length; i++){
+      var t = trova(et[i].getAttribute("data-id"));
+      if(et[i].classList.contains("spento")) continue;
+      var area = t.perimetri.reduce(function(a, p){ return a + p.length; }, 0);
+      var prio = t.id === selId ? 1e6 : (agibile(t) ? 1e4 : 1e3) + area;
+      lista.push({ el: et[i], prio: prio });
+    }
+    var vv = gEtichette.querySelectorAll(".et-varco");
+    for(var j = 0; j < vv.length; j++){
+      lista.push({ el: vv[j], prio: vv[j].classList.contains("princ") ? 5e3 : 10, varco: true });
+    }
+    lista.sort(function(a, b){ return b.prio - a.prio; });
+    var presi = [];
+    lista.forEach(function(o){
+      o.el.style.visibility = "";
+      // per i varchi conta solo la scritta: il pallino resta sempre
+      var bersaglio = o.varco ? o.el.querySelector("text") : o.el;
+      var r = bersaglio.getBoundingClientRect();
+      var tocca = presi.some(function(q){
+        return r.left < q.right + 3 && r.right > q.left - 3 && r.top < q.bottom + 3 && r.bottom > q.top - 3;
+      });
+      if(tocca){
+        if(o.varco) bersaglio.style.visibility = "hidden"; else o.el.style.visibility = "hidden";
+      }else{
+        if(o.varco) bersaglio.style.visibility = "";
+        presi.push(r);
+      }
+    });
+  }
+
+  var ZOOM_INIZIALE = 1.7;
+  function vistaIniziale(){
+    scala = 1; dx = 0; dy = 0;
+    var r = mappaEl.getBoundingClientRect();
+    // sul telefono in verticale il porto e' una striscia: si parte piu' vicini
+    var f = r.width < r.height ? ZOOM_INIZIALE : 1;
+    if(f !== 1) zoomCentro(f); else aggiornaVista();
+  }
+
+  function puntoSvg(clientX, clientY){
+    var r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal, u = upp();
+    // con preserveAspectRatio "meet" il disegno e' centrato nel riquadro
+    var offX = (r.width  - vb.width  / u) / 2;
+    var offY = (r.height - vb.height / u) / 2;
+    return { x: (clientX - r.left - offX) * u + vb.x, y: (clientY - r.top - offY) * u + vb.y };
+  }
+  function zoomIntorno(cx, cy, fattore){
+    var p = puntoSvg(cx, cy);
+    var mx = (p.x - dx) / scala, my = (p.y - dy) / scala;
+    scala = Math.min(14, Math.max(.7, scala * fattore));
+    dx = p.x - mx * scala; dy = p.y - my * scala;
+    programmaVista();
+  }
+  var animazione = null;
+  function centraSu(id){
+    var t = trova(id); if(!t) return;
+    var grande = t.perimetri.slice().sort(function(a, b){ return b.length - a.length; })[0];
+    var xs = grande.map(function(c){ return px(c[1]); }), ys = grande.map(function(c){ return py(c[0]); });
+    var cx = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
+    var cy = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+    var vb = svg.viewBox.baseVal;
+    var s1 = Math.max(scala, 1.7);
+    var dx1 = vb.x + vb.width / 2 - cx * s1, dy1 = vb.y + vb.height / 2 - cy * s1;
+    var s0 = scala, dx0 = dx, dy0 = dy, t0 = null;
+    var ridotto = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if(animazione) cancelAnimationFrame(animazione);
+    function passo(ts){
+      if(t0 === null) t0 = ts;
+      var k = ridotto ? 1 : Math.min(1, (ts - t0) / 350);
+      var e = 1 - Math.pow(1 - k, 3);
+      scala = s0 + (s1 - s0) * e; dx = dx0 + (dx1 - dx0) * e; dy = dy0 + (dy1 - dy0) * e;
+      aggiornaVista();
+      if(k < 1) animazione = requestAnimationFrame(passo); else animazione = null;
+    }
+    animazione = requestAnimationFrame(passo);
+  }
+
+  function zoomCentro(f){
+    var r = mappaEl.getBoundingClientRect();
+    zoomIntorno(r.left + r.width/2, r.top + r.height/2, f);
+  }
+  document.getElementById("zPiu").addEventListener("click", function(){ zoomCentro(1.5); });
+  document.getElementById("zMeno").addEventListener("click", function(){ zoomCentro(1/1.5); });
+  document.getElementById("zCasa").addEventListener("click", vistaIniziale);
+  mappaEl.addEventListener("wheel", function(e){
+    e.preventDefault(); zoomIntorno(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1/1.15);
+  }, { passive: false });
+
+  // dita e mouse: un puntatore sposta, due puntatori ingrandiscono
+  var puntatori = {}, mosso = 0, pinch = null, ultimo = null;
+  function quanti(){ return Object.keys(puntatori).length; }
+  mappaEl.addEventListener("pointerdown", function(e){
+    if(e.target.closest && e.target.closest(".comandi")) return;
+    puntatori[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if(quanti() === 1){ mosso = 0; ultimo = { x: e.clientX, y: e.clientY }; }
+    if(quanti() === 2){
+      var p = Object.keys(puntatori).map(function(k){ return puntatori[k]; });
+      pinch = { d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), s: scala };
+      mosso = 99;
+    }
+  });
+  mappaEl.addEventListener("pointermove", function(e){
+    if(!puntatori[e.pointerId]) return;
+    puntatori[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if(quanti() === 1 && ultimo){
+      var u = upp();
+      var ddx = e.clientX - ultimo.x, ddy = e.clientY - ultimo.y;
+      mosso += Math.abs(ddx) + Math.abs(ddy);
+      dx += ddx * u; dy += ddy * u;
+      ultimo = { x: e.clientX, y: e.clientY };
+      programmaVista();
+    }else if(quanti() === 2 && pinch){
+      var p = Object.keys(puntatori).map(function(k){ return puntatori[k]; });
+      var d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+      var obiettivo = Math.min(14, Math.max(.7, pinch.s * d / pinch.d));
+      zoomIntorno((p[0].x + p[1].x)/2, (p[0].y + p[1].y)/2, obiettivo / scala);
+    }
+  });
+  function rilascia(e){
+    if(!puntatori[e.pointerId]) return;
+    delete puntatori[e.pointerId];
+    if(quanti() < 2) pinch = null;
+    if(quanti() === 1){
+      var k = Object.keys(puntatori)[0]; ultimo = { x: puntatori[k].x, y: puntatori[k].y };
+    }
+    if(quanti() === 0){
+      if(e.type === "pointerup" && mosso < 8) tocco(e.clientX, e.clientY);
+      ultimo = null;
+    }
+  }
+  ["pointerup", "pointercancel"].forEach(function(ev){ mappaEl.addEventListener(ev, rilascia); });
+  mappaEl.addEventListener("pointerleave", function(e){ if(e.pointerType === "mouse") rilascia(e); });
+
+  function tocco(x, y){
+    var el = document.elementFromPoint(x, y);
+    var g = el && el.closest ? el.closest(".molo") : null;
+    seleziona(g ? g.getAttribute("data-id") : null, true);
+  }
+
+  /* ================= SELEZIONE ================= */
+  function seleziona(id, daMappa){
+    selId = id;
+    if(id && !daMappa) centraSu(id);
+    var moli = gRoot.querySelectorAll(".molo");
+    for(var i = 0; i < moli.length; i++){
+      var on = moli[i].getAttribute("data-id") === id;
+      moli[i].classList.toggle("sel", on);
+      // in primo piano tra i terminal, ma sotto le strade interne e le scritte
+      if(on){ var dopo = gRoot.querySelector(".strade-interne") || gEtichette; gRoot.insertBefore(moli[i], dopo); }
+    }
+    var et = gEtichette.querySelectorAll(".et-molo");
+    for(var j = 0; j < et.length; j++){
+      et[j].classList.toggle("sel", et[j].getAttribute("data-id") === id);
+    }
+    programmaVista();
+    var cards = carosello.querySelectorAll(".card");
+    for(var c = 0; c < cards.length; c++){
+      var sel = cards[c].getAttribute("data-id") === id;
+      cards[c].classList.toggle("sel", sel);
+      if(sel && daMappa){
+        if(cards[c].hidden){ impostaFiltro("tutti"); }
+        cards[c].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      }
+    }
+  }
+
+  /* ================= SCHEDE IN BASSO ================= */
+  var carosello = document.getElementById("carosello");
+  var vuoto = document.getElementById("vuoto");
+
+  function costruisciCarosello(){
+    carosello.innerHTML = "";
+    tutti.forEach(function(t){
+      var c = document.createElement("div");
+      c.className = "card";
+      c.setAttribute("data-id", t.id);
+      c.setAttribute("role", "button");
+      c.setAttribute("tabindex", "0");
+      c.innerHTML =
+        '<div class="testa"><span class="pastiglia"></span><span class="badge"></span></div>' +
+        '<h3></h3><p class="moli"></p>' +
+        (t.accessoBreve ? '<p class="breve"><span class="modo-ico"></span><span class="breve-t"></span></p>' : '') +
+        '<div class="riga-az">' +
+          '<a class="bottone b-primario vai" target="_blank" rel="noopener">' + ICONA_VAI + 'Come ci arrivo</a>' +
+          '<button class="az" type="button"></button>' +
+        '</div>';
+      c.querySelector(".pastiglia").style.background = agibile(t) ? t.colore : "#D9D5CB";
+      c.querySelector("h3").textContent = t.nome;
+      c.querySelector(".moli").textContent = t.moli.join(" · ");
+      if(t.accessoBreve){
+        var modi = (t.accesso || []).map(function(a){ return a.modo; });
+        c.querySelector(".modo-ico").innerHTML = ICONE_MODO[modi.length === 1 ? modi[0] : "piedi"] || "";
+        c.querySelector(".breve-t").textContent = t.accessoBreve;
+      }
+      var vai = c.querySelector(".vai");
+      vai.href = linkGPS(t);
+      vai.addEventListener("click", function(e){ e.stopPropagation(); });
+      c.querySelector(".az").addEventListener("click", function(e){ e.stopPropagation(); azioneLista(t); });
+      c.addEventListener("click", function(){ seleziona(t.id, false); apri(t.id); });
+      c.addEventListener("keydown", function(e){ if(e.key === "Enter"){ seleziona(t.id, false); apri(t.id); } });
+      carosello.appendChild(c);
+    });
+    // in fondo ai visitati: ricominciare il giro
+    var r = document.createElement("div");
+    r.className = "card ricomincia";
+    r.setAttribute("data-id", "_ricomincia");
+    r.innerHTML = '<p>Finito il giro? Rimetti tutti i visitati da visitare.</p>' +
+                  '<button class="bottone b-secondario" type="button">Ricomincia il giro</button>';
+    r.querySelector("button").addEventListener("click", function(){
+      var prima = JSON.parse(JSON.stringify(stato));
+      var primaGiro = giro;
+      tutti.forEach(function(t){ if(eFatto(t)) stato[t.id] = "lista"; });
+      giro = { inizio: Date.now(), lungo: giro ? giro.lungo : false };
+      salvaStato();
+      impostaFiltro("da_fare");
+      avvisa("Tutti i visitati sono di nuovo da visitare.", function(){
+        stato = prima; giro = primaGiro; salvaStato(); impostaFiltro("fatti");
+      });
+    });
+    carosello.appendChild(r);
+  }
+
+  var ICONA_SPUNTA = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+
+  /* il pulsante accanto a "Come ci arrivo" cambia con la vista e con lo stato */
+  function disegnaAzione(t, b, card){
+    card.classList.remove("da-fare-vista");
+    b.className = "az"; b.hidden = false;
+    if(!agibile(t)){ b.hidden = true; return; }
+    if(filtro === "da_fare"){
+      card.classList.add("da-fare-vista");
+      b.innerHTML = '<span class="casella"></span>Visitato';
+      b.setAttribute("aria-label", "Segna " + t.nome + " come visitato");
+    }else if(filtro === "fatti"){
+      b.innerHTML = "Da rifare";
+      b.setAttribute("aria-label", "Rimetti " + t.nome + " da visitare");
+    }else if(eFatto(t)){
+      b.className = "az spunta"; b.innerHTML = ICONA_SPUNTA;
+      b.setAttribute("aria-label", t.nome + " visitato: tocca per rimetterlo da visitare");
+    }else if(inLista(t)){
+      b.className = "az in-lista"; b.innerHTML = ICONA_SPUNTA + "Lista";
+      b.setAttribute("aria-label", "Togli " + t.nome + " da da visitare");
+    }else{
+      b.innerHTML = '<span style="font-size:22px;line-height:1">+</span>';
+      b.setAttribute("aria-label", "Aggiungi " + t.nome + " a da visitare");
+    }
+  }
+
+  function azioneLista(t){
+    if(!agibile(t)) return;
+    var prima = stato[t.id] || null;
+    var ripristina = function(){ imposta(t, prima); };
+    if(filtro === "da_fare"){
+      imposta(t, "fatto");
+      avvisa(t.nome + " è nei visitati.", ripristina);
+    }else if(filtro === "fatti" || eFatto(t)){
+      imposta(t, "lista");
+      avvisa(t.nome + " è di nuovo da visitare.", ripristina);
+    }else if(inLista(t)){
+      imposta(t, null);
+      avvisa(t.nome + " tolto da da visitare.", ripristina);
+    }else{
+      imposta(t, "lista");
+      avvisa(t.nome + " aggiunto a da visitare.", ripristina);
+    }
+  }
+
+  function aggiornaGiro(){
+    var el = document.getElementById("giro");
+    el.hidden = !giro;
+    if(!giro) return;
+    var resta = giro.inizio + durataGiro() - Date.now();
+    var ore = Math.max(0, Math.floor(resta / ORA)), min = Math.max(0, Math.ceil((resta % ORA) / 60000));
+    document.getElementById("giroTesto").textContent =
+      "Lista e visitati si azzerano tra " + (ore >= 1 ? ore + " h" : min + " min");
+    document.getElementById("giro72").checked = !!giro.lungo;
+  }
+  function controllaGiro(){
+    if(giroScaduto()){
+      stato = {}; giro = null; scrivi(CHIAVE_STATO, stato); scrivi(CHIAVE_GIRO, null);
+      aggiornaTutto();
+      avvisa("Lista e visitati sono stati azzerati.", null);
+    }else{ aggiornaGiro(); }
+  }
+
+  function aggiornaTutto(){
+    // mappa
+    tutti.forEach(function(t){
+      var g = gRoot.querySelector('.molo[data-id="' + t.id + '"]');
+      var et = gEtichette.querySelector('.et-molo[data-id="' + t.id + '"]');
+      var v = visibile(t);
+      g.classList.toggle("spento", !v);
+      g.classList.toggle("fatto", eFatto(t));
+      et.classList.toggle("spento", !v);
+      et.querySelector(".sotto").textContent = !agibile(t) ? "non agibile" :
+        (eFatto(t) ? "visitato" : (inLista(t) ? "da visitare" : ""));
+      if(v) dimensionaPillola(et);
+    });
+    // schede
+    var n = 0;
+    tutti.forEach(function(t){
+      var c = carosello.querySelector('[data-id="' + t.id + '"]');
+      var v = visibile(t);
+      if(v) n++;
+      c.hidden = !v;
+      c.classList.toggle("chiuso", !agibile(t));
+      c.classList.toggle("fatto", eFatto(t));
+      var b = c.querySelector(".badge");
+      b.className = "badge" + (eFatto(t) ? " ok" : "");
+      b.textContent = !agibile(t) ? "Non agibile" : (eFatto(t) ? "Visitato" : (inLista(t) ? "Da visitare" : ""));
+      b.hidden = !b.textContent;
+      disegnaAzione(t, c.querySelector(".az"), c);
+    });
+    var nLista = tutti.filter(inLista).length, nFatti = tutti.filter(eFatto).length;
+    carosello.querySelector('[data-id="_ricomincia"]').hidden = !(filtro === "fatti" && nFatti);
+    carosello.hidden = !n;
+    vuoto.hidden = !!n;
+    if(!n){
+      var testo = "", bott = "";
+      if(filtro === "da_fare"){
+        testo = nFatti ? "Giro completato: tutti i moli in lista sono visitati."
+                       : "Nessun molo da visitare. In Tutti tocca + sui moli che vuoi fare.";
+        bott = "Scegli i moli";
+      }else if(filtro === "fatti"){
+        testo = "Ancora nessun molo visitato.";
+        bott = nLista ? "Vai a quelli da visitare" : "";
+      }
+      document.getElementById("vuotoTesto").textContent = testo;
+      var vb = document.getElementById("vuotoBtn");
+      vb.textContent = bott; vb.hidden = !bott;
+      vb.onclick = function(){ impostaFiltro(filtro === "fatti" ? "da_fare" : "tutti"); };
+    }
+    // contatori
+    document.getElementById("nTutti").textContent = tutti.length;
+    document.getElementById("nDaFare").textContent = nLista;
+    document.getElementById("nFatti").textContent = nFatti;
+    aggiornaGiro();
+    aggiornaVista();
+  }
+
+  function impostaFiltro(f){
+    filtro = f;
+    Array.prototype.forEach.call(document.querySelectorAll(".chip"), function(x){
+      x.classList.toggle("on", x.getAttribute("data-f") === f);
+    });
+    aggiornaTutto();
+  }
+  Array.prototype.forEach.call(document.querySelectorAll(".chip"), function(b){
+    b.addEventListener("click", function(){ impostaFiltro(b.getAttribute("data-f")); });
+  });
+
+  /* ================= SCHEDA DI DETTAGLIO ================= */
+  var scheda = document.getElementById("scheda");
+  var velo = document.getElementById("velo");
+
+  function riga(et, html){ return '<div class="riga"><div class="et">' + et + '</div><div>' + html + '</div></div>'; }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]; }); }
+
+  var NOMI_MODO = { auto: "In auto", piedi: "A piedi", navetta: "Con lo shuttle" };
+  function bloccoContatti(t){
+    if(!t.contatti || !t.contatti.length) return "";
+    return t.contatti.map(function(c){
+      return '<a class="contatto" href="tel:' + esc(String(c.numero).replace(/\s/g, "")) + '">' +
+        '<span class="modo modo-tel">' + ICONA_TEL + '</span>' +
+        '<span><b>' + esc(c.voce) + '</b><span class="num">' + esc(c.numero) + '</span></span></a>';
+    }).join("");
+  }
+
+  function bloccoAccesso(t){
+    var voci = (t.accesso || []);
+    if(!voci.length && !(t.contatti && t.contatti.length)) return "";
+    return '<div class="accesso-box"><h4>Come si entra</h4>' +
+      voci.map(function(a){
+        return '<div class="accesso-voce">' +
+          '<span class="modo modo-' + a.modo + '">' + (ICONE_MODO[a.modo] || "") + '</span>' +
+          '<div><b>' + esc(a.dove || NOMI_MODO[a.modo] || "") + '</b>' +
+          (a.dove ? ' <span class="tag-modo">' + esc(NOMI_MODO[a.modo] || "") + '</span>' : '') +
+          '<p>' + esc(a.testo) + '</p></div></div>';
+      }).join("") + bloccoContatti(t) + '</div>';
+  }
+
+  function apri(id){
+    var t = trova(id);
+    if(!t) return;
+    var v0 = varchi.filter(function(v){ return v.id === varcoScelto; })[0] || principale;
+
+    var opzioni = varchi.map(function(v){
+      return '<option value="' + v.id + '"' + (v.id === v0.id ? " selected" : "") + '>' +
+             v.nome + (v.dettaglio ? " (" + v.dettaglio + ")" : "") + '</option>';
+    }).join("");
+
+    var avvisi = "";
+    if(!agibile(t))
+      avvisi += '<div class="nota chiuso"><b>Non agibile al momento.</b> Resta sulla mappa come riferimento.</div>';
+    if(t.perimetroDaVerificare)
+      avvisi += '<div class="nota attenzione">Il perimetro di questo terminal è da confermare.</div>';
+    if(t.ingressoDaVerificare)
+      avvisi += '<div class="nota attenzione">Il punto di arrivo è il bordo del terminal: ' +
+                'la prima volta conviene verificare dove si entra.</div>';
+
+    scheda.innerHTML =
+      '<div class="testa-scheda" id="testaScheda"><div class="maniglia"></div>' +
+        '<button class="chiudi-scheda" id="btChiudi" type="button" aria-label="Chiudi la scheda">' +
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
+        '</button></div>' +
+      '<div class="barra"></div>' +
+      '<h2></h2>' + (t.sottotitolo ? '<p class="sub"></p>' : '') +
+      avvisi +
+      bloccoAccesso(t) +
+      '<div class="azioni">' +
+        '<a class="bottone b-primario" target="_blank" rel="noopener" id="lnkGps">' + ICONA_VAI + 'Come ci arrivo</a>' +
+        '<div class="davarco">' +
+          '<label for="selVarco">Oppure in auto da un varco</label>' +
+          '<select id="selVarco">' + opzioni + '</select>' +
+          '<a class="bottone b-secondario" target="_blank" rel="noopener" id="lnkVarco">Percorso dal varco</a>' +
+        '</div>' +
+        '<button class="bottone b-stato" id="btStato"></button>' +
+        '<button class="bottone b-secondario" id="btStato2" hidden></button>' +
+      '</div>' +
+      riga("Moli", t.moli.join("<br>")) +
+      riga("Attività", t.attivita) +
+      riga("Indirizzo", t.indirizzo) +
+      (t.indirizzoUffici ? riga("Uffici", t.indirizzoUffici) : "") +
+      riga("Telefono", '<a href="tel:' + t.telefono.replace(/\s/g, "") + '">' + t.telefono + '</a>') +
+      riga("Sito", '<a href="' + t.sito + '" target="_blank" rel="noopener">' + t.sito.replace(/^https?:\/\//, "") + '</a>') +
+      riga("Banchine", t.banchina) +
+      riga("Superficie", t.superficie) +
+      '<p class="piede">Lo stato e i filtri restano su questo telefono.<br>Nessun altro vede le tue modifiche.</p>';
+
+    scheda.querySelector(".barra").style.background = agibile(t) ? t.colore :
+      "repeating-linear-gradient(135deg,#D9D5CB 0 4px,#F1EFE8 4px 8px)";
+    scheda.querySelector("h2").textContent = t.nome;
+    if(t.sottotitolo) scheda.querySelector(".sub").textContent = t.sottotitolo;
+    document.getElementById("lnkGps").href = linkGPS(t);
+
+    var sel = document.getElementById("selVarco");
+    var lnk = document.getElementById("lnkVarco");
+    function aggiornaVarco(){
+      var v = varchi.filter(function(x){ return x.id === sel.value; })[0] || principale;
+      varcoScelto = v.id; scrivi(CHIAVE_VARCO, v.id);
+      lnk.href = linkDaVarco(t, v);
+      lnk.textContent = "Percorso da " + v.nome;
+    }
+    sel.addEventListener("change", aggiornaVarco);
+    aggiornaVarco();
+
+    // pulsanti della lista nel dettaglio
+    var bt = document.getElementById("btStato");
+    var bt2 = document.getElementById("btStato2");
+    function etichetta(){
+      bt2.hidden = true;
+      bt.classList.remove("fatto");
+      if(!agibile(t)){ bt.disabled = true; bt.textContent = "Non agibile"; return; }
+      if(eFatto(t)){
+        bt.classList.add("fatto");
+        bt.textContent = "Visitato — rimetti da visitare";
+      }else if(inLista(t)){
+        bt.textContent = "Segna come visitato";
+        bt2.hidden = false; bt2.textContent = "Togli da da visitare";
+      }else{
+        bt.textContent = "+ Aggiungi a da visitare";
+      }
+    }
+    etichetta();
+    bt.addEventListener("click", function(){
+      if(!agibile(t)) return;
+      imposta(t, eFatto(t) ? "lista" : (inLista(t) ? "fatto" : "lista"));
+      etichetta();
+    });
+    bt2.addEventListener("click", function(){ imposta(t, null); etichetta(); });
+
+    if(!scheda.classList.contains("on")){
+      try{ history.pushState({ scheda: true }, ""); }catch(e){}
+    }
+    scheda.classList.add("on");
+    velo.classList.add("on");
+    scheda.scrollTop = 0;
+    document.getElementById("btChiudi").addEventListener("click", function(){ chiudi(); });
+    preparaTrascinamento();
+  }
+
+  function chiudi(daIndietro){
+    if(!scheda.classList.contains("on")) return;
+    scheda.classList.remove("on", "trascina");
+    scheda.style.transform = "";
+    velo.classList.remove("on");
+    // tolgo la voce aggiunta all'apertura, se c'e' ancora
+    if(daIndietro !== true){
+      try{ if(history.state && history.state.scheda) history.back(); }catch(e){}
+    }
+  }
+  velo.addEventListener("click", function(){ chiudi(); });
+  window.addEventListener("popstate", function(){ chiudi(true); });
+
+  /* trascinare la testa della scheda verso il basso la chiude */
+  function preparaTrascinamento(){
+    var testa = document.getElementById("testaScheda");
+    var y0 = null, dy = 0;
+    testa.addEventListener("pointerdown", function(e){
+      if(e.target.closest("#btChiudi")) return;
+      y0 = e.clientY; dy = 0; scheda.classList.add("trascina");
+      try{ testa.setPointerCapture(e.pointerId); }catch(err){}
+    });
+    testa.addEventListener("pointermove", function(e){
+      if(y0 === null) return;
+      dy = Math.max(0, e.clientY - y0);
+      scheda.style.transform = "translateY(" + dy + "px)";
+    });
+    function fine(){
+      if(y0 === null) return;
+      y0 = null; scheda.classList.remove("trascina");
+      if(dy > 80) chiudi(); else scheda.style.transform = "";
+    }
+    testa.addEventListener("pointerup", fine);
+    testa.addEventListener("pointercancel", fine);
+  }
+  document.addEventListener("keydown", function(e){ if(e.key === "Escape") chiudi(); });
+
+  document.getElementById("giro72").addEventListener("change", function(e){
+    if(!giro) return;
+    giro.lungo = e.target.checked;
+    scrivi(CHIAVE_GIRO, giro);
+    controllaGiro();
+  });
+  setInterval(function(){ if(avviato) controllaGiro(); }, 60000);
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible" && avviato) controllaGiro();
+  });
+
+  if(pinRicordato) sblocca();
+
+  if("serviceWorker" in navigator){
+    try{ navigator.serviceWorker.register("sw.js"); }catch(e){}
+  }
+})();
+};
+</script>
+</body>
+</html>
