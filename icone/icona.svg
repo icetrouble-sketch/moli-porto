@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- sfondo pieno: iOS arrotonda gli angoli da solo -->
+  <rect width="512" height="512" fill="#EC5E27"/>
+  <!-- banchina -->
+  <rect x="64" y="118" width="384" height="58" rx="14" fill="#FDFDF1"/>
+  <!-- moli, di lunghezze diverse come nel porto -->
+  <g fill="#FDFDF1">
+    <rect x="84"  y="150" width="54" height="236" rx="12"/>
+    <rect x="176" y="150" width="54" height="282" rx="12"/>
+    <rect x="268" y="150" width="54" height="214" rx="12"/>
+    <rect x="360" y="150" width="54" height="262" rx="12"/>
+  </g>
+  <!-- punte nei colori dei terminal -->
+  <rect x="84"  y="338" width="54" height="48" rx="12" fill="#A9CFC4"/>
+  <rect x="176" y="384" width="54" height="48" rx="12" fill="#F4D59B"/>
+  <rect x="268" y="316" width="54" height="48" rx="12" fill="#E8AFBC"/>
+  <rect x="360" y="364" width="54" height="48" rx="12" fill="#A8C3DC"/>
+</svg>
