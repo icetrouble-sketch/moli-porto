@@ -61,4 +61,5 @@ jobs:
           git add navi.enc.json
           if git diff --cached --quiet; then echo "Niente di nuovo"; exit 0; fi
           git commit -q -m "Navi aggiornate $(TZ=Europe/Rome date '+%d/%m %H:%M')"
-          git push -q
+          # se nel frattempo e' stato caricato qualcos'altro, ci si rimette in pari
+          for i in 1 2 3; do git pull -q --rebase && git push -q && break; sleep 5; done
