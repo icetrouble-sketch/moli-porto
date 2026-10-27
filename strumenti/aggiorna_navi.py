@@ -976,8 +976,10 @@ def main():
     else:
         try:
             note, pagina = con_tentativi(lambda: note_sul_sito(sess))
-            # servono ieri (navi che restano piu' giorni), oggi e domani: ciascuno col suo giorno
-            utili = [(d, b) for d, b in note if (oggi_r - timedelta(days=1)).isoformat() <= d <= (oggi_r + timedelta(days=1)).isoformat()]
+            # servono oggi e domani, ciascuno col suo giorno. Ieri solo se non c'e' ancora memoria di nessun
+            # giornale (le navi che restano piu' giorni si ricordano dai giri precedenti); piu' vecchi mai.
+            dal = oggi_r if letti else oggi_r - timedelta(days=1)
+            utili = [(d, b) for d, b in note if dal.isoformat() <= d <= (oggi_r + timedelta(days=1)).isoformat()]
             log("giornali gia' letti:", sorted(letti) or "nessuno", "| utili sul sito:", [d for d, _ in utili])
             for d, b in sorted(x for x in utili if forza or x[0] not in letti):
                 try:
