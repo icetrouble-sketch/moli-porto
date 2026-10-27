@@ -1849,7 +1849,7 @@ window.avviaApp = function(){
     if(NAVI.esempio)
       h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Esempio.</b> Navi lette dal giornale del ' + esc(giornoEsteso(NAVI.data)) +
            '. L\'aggiornamento automatico e le posizioni in tempo reale si attivano quando colleghiamo aisstream.</div>';
-    else if(NAVI.data !== oggi())
+    else if((NAVI.giornali || [NAVI.data]).indexOf(oggi()) < 0)
       h += '<div class="nota attenzione" style="margin:0 0 10px">Il giornale è del <b>' + esc(giornoEsteso(NAVI.data)) +
            '</b>: quello di oggi non è ancora arrivato. Gli orari valgono per quel giorno.</div>';
     var agg = NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
@@ -2051,7 +2051,7 @@ window.avviaApp = function(){
   }
   function inizioSosta(n){
     if(n.in_porto_dal) return n.in_porto_dal;
-    return n.giorno || (NAVI && NAVI.data) || oggi();
+    return n.arrivo_giorno || n.giorno || (NAVI && NAVI.data) || oggi();
   }
   /* la visita fatta durante questa sosta (dal foglio o ancora in coda), se c'e' */
   function visitaSosta(n){

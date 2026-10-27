@@ -134,7 +134,10 @@ def raddrizza(grigio):
     M = cv2.getRotationMatrix2D((W / 2, H / 2), fine, 1)
     return cv2.warpAffine(grigio, M, (W, H), flags=cv2.INTER_CUBIC, borderValue=255), fine
 
-def leggi(percorso):
+def leggi(percorso, zona_iniziale="PRINCIPALE"):
+    """zona_iniziale: la zona in cui si trovava l'ultima riga della pagina prima.
+    Una zona (per esempio MEZZI DIGA) puo' continuare sulla pagina dopo senza
+    ripetere il titolo: senza questo, le sue righe sembrerebbero della zona principale."""
     src = cv2.imread(percorso)
     grigio = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
     grigio, angolo = raddrizza(grigio)
@@ -148,14 +151,16 @@ def leggi(percorso):
     # (servono 13 linee verticali); si prende la sequenza piu' ampia
     risultati = []
     if len(colonne) < 13:
-        return {"errore": f"griglia non trovata ({len(colonne)} colonne)", "righe": []}
+        return {"errore": f"griglia non trovata ({len(colonne)} colonne)", "righe": [],
+                "zona_finale": zona_iniziale, "date_titoli": []}
     c = scegli_colonne(colonne)
     nomi = ["H", "OP", "NAVE", "GT", "IMO", "PR", "PP", "LOA", "LARG", "TYPE", "ACCOSTO", "AGENZIA"]
     sezione = None
     # zona del giornale: PRINCIPALE (bacino di Sampierdarena e porto storico),
     # VARIAZIONI (cambi al giornale del giorno prima), AREA MULTEDO, AREA VOLTRI,
     # MEZZI DIGA (draghe, pontoni e motobarche del cantiere della nuova diga)
-    zona = "PRINCIPALE"
+    zona = zona_iniziale
+    date_titoli = []      # date lette nei titoli ("PREVISIONI DEL 27/10/2026"), solo per controllo
     def colonne_locali(y0, y1):
         striscia = bin_inv[y0:y1]
         loc = []
@@ -183,7 +188,11 @@ def leggi(percorso):
         cella = lambda i: pulita[y0 + 3:y1 - 2, c[i] + M:c[i + 1] - 6]
         intera = pulita[y0 + 3:y1 - 2, c[0] + 4:c[-1] - 3]
         if riga_titolo(y0, y1):
-            titolo = re.sub(r"[^A-Z]", "", ocr(intera, "--psm 7").upper())
+            testo_titolo = ocr(intera, "--psm 7")
+            dt = re.search(r"(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(20\d{2})", testo_titolo)
+            if dt:
+                date_titoli.append(f"{dt.group(3)}-{int(dt.group(2)):02d}-{int(dt.group(1)):02d}")
+            titolo = re.sub(r"[^A-Z]", "", testo_titolo.upper())
             if not titolo:
                 continue
             simile = lambda parola: difflib.SequenceMatcher(None, parola, titolo).find_longest_match(0, len(parola), 0, len(titolo)).size >= len(parola) - 1
@@ -229,7 +238,8 @@ def leggi(percorso):
         riga["sezione"] = sezione
         riga["dove"] = riconosci_accosto(riga["accosto"])
         risultati.append(riga)
-    return {"righe": risultati, "colonne": len(colonne), "linee": len(righe), "angolo": round(float(angolo), 2)}
+    return {"righe": risultati, "colonne": len(colonne), "linee": len(righe), "angolo": round(float(angolo), 2),
+            "zona_finale": zona, "date_titoli": date_titoli}
 
 if __name__ == "__main__":
     r = leggi(sys.argv[1])

@@ -70,51 +70,86 @@ def campi_nascosti(html):
             re.finditer(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', html)}
 
 
-def data_giornale_sul_sito(sess):
+BOTTONE_NOTA = "ctl00$ctl00$corpo$btnCap"
+
+
+def con_tentativi(f, tentativi=3, pausa=10):
+    """Il sito ogni tanto non risponde o restituisce una pagina a meta':
+    si riprova qualche volta prima di arrendersi."""
+    for i in range(tentativi):
+        try:
+            return f()
+        except Exception as e:
+            log(f"tentativo {i + 1}/{tentativi} fallito:", type(e).__name__, e)
+            if i + 1 == tentativi:
+                raise
+            time.sleep(pausa * (i + 1))
+
+
+def note_sul_sito(sess):
+    """Tutte le note della Capitaneria che la home elenca con il pulsante di download,
+    dalla piu' recente: [(data 'AAAA-MM-GG', nome del pulsante)], e la pagina."""
+    r = sess.get(SITO + "/ITA/Default.aspx", timeout=40)
+    r.raise_for_status()
+    date = [f"{a}-{m}-{g}" for g, m, a in re.findall(r"Note della Capitaneria del (\d{2})/(\d{2})/(\d{4})", r.text)]
+    if not date:
+        raise RuntimeError("data del giornale non trovata nella pagina")
+    pulsanti = sorted({int(n) for n in re.findall(r'name="' + re.escape(BOTTONE_NOTA) + r'(\d+)"', r.text)})
+    # la nota piu' recente e' la prima della lista e ha il primo pulsante, la seconda il secondo, ecc.
+    if len(pulsanti) >= len(date) and date == sorted(set(date), reverse=True):
+        note = [(d, BOTTONE_NOTA + str(pulsanti[i])) for i, d in enumerate(date)]
+    else:
+        log("attenzione: date", date, "e pulsanti", pulsanti, "non si abbinano: uso solo la prima nota")
+        note = [(date[0], BOTTONE_NOTA + "1")]
+    log("note sul sito:", ", ".join(f"{d} ({b[-1]})" for d, b in note))
+    return note, r.text
+
+
+def scarica_giornale(sess, bottone):
+    """Scarica il PDF della nota associata al pulsante. Ogni scarico riparte dalla
+    home, cosi' i campi nascosti del modulo sono sempre freschi."""
     import html as H
     r = sess.get(SITO + "/ITA/Default.aspx", timeout=40)
     r.raise_for_status()
-    m = re.search(r"Note della Capitaneria del (\d{2})/(\d{2})/(\d{4})", r.text)
-    if not m:
-        raise RuntimeError("data del giornale non trovata nella pagina")
     campi = {k: H.unescape(v) for k, v in campi_nascosti(r.text).items()}
-    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}", campi, r.text
-
-
-def scarica_giornale(sess, campi):
-    campi = dict(campi)
     campi["__EVENTTARGET"] = ""; campi["__EVENTARGUMENT"] = ""
-    campi["ctl00$ctl00$corpo$btnCap1"] = ""
+    campi[bottone] = ""
     r = sess.post(SITO + "/ITA/Default.aspx", data=campi, timeout=60)
     r.raise_for_status()
     p = sess.get(SITO + "/frmPdf.aspx", timeout=60)
     p.raise_for_status()
     if not p.content.startswith(b"%PDF"):
         raise RuntimeError("il sito non ha restituito un PDF")
+    if len(p.content) < 5000:
+        raise RuntimeError(f"PDF troppo piccolo ({len(p.content)} byte): scarico incompleto")
     return p.content
 
 
 def leggi_pdf(pdf_bytes):
+    """Righe del giornale e date lette nei titoli delle pagine (solo per controllo)."""
     import leggi_giornale as L
-    righe = []
+    righe, date_titoli = [], []
     with tempfile.TemporaryDirectory() as d:
         f = os.path.join(d, "g.pdf")
         open(f, "wb").write(pdf_bytes)
         subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", f, os.path.join(d, "p")], check=True)
         pagine = sorted(x for x in os.listdir(d) if x.endswith(".png"))
-        sezione = None
+        sezione, zona = None, "PRINCIPALE"
         for pg in pagine:
-            r = L.leggi(os.path.join(d, pg))
-            log("pagina", pg, "righe", len(r.get("righe", [])), "angolo", r.get("angolo"), r.get("errore") or "")
+            # la zona (es. MEZZI DIGA) puo' continuare sulla pagina dopo: si porta dietro
+            r = L.leggi(os.path.join(d, pg), zona)
+            zona = r.get("zona_finale") or zona
+            date_titoli += r.get("date_titoli") or []
+            log("pagina", pg, "righe", len(r.get("righe", [])), "angolo", r.get("angolo"), "zona a fine pagina:", zona, r.get("errore") or "")
             for x in r.get("righe", []):
                 if x["sezione"] is None and sezione:
                     x["sezione"] = sezione
                 sezione = x["sezione"] or sezione
                 righe.append(x)
             # dopo i mezzi diga non serve continuare
-            if any((x.get("sezione") or "") == "MEZZI DIGA" for x in r.get("righe", [])):
+            if zona == "MEZZI DIGA":
                 break
-    return righe
+    return righe, date_titoli
 
 
 TIPI = ["CONT.", "RO/RO", "BULK", "CHIM.", "TANK", "CARGO", "PASS.", "CRUISE", "YACHT", "HOPPER", "GAS", "REEFER", "GEN.CARGO"]
@@ -247,12 +282,105 @@ def da_a(accosto):
     return (m.group(1), m.group(2)) if m else (None, None)
 
 
+# ---------------------------------------------------------------- navi che non si visitano
+# Oltre ai mezzi di servizio e ai mezzi della diga (esclusi dalla zona del giornale):
+# - le navi chemical (chimichiere);
+# - le RO/RO che portano passeggeri (ro-pax, traghetti).
+NOTA_RORO = "Ro-ro: né il giornale né l'AIS dicono ancora se porta passeggeri, da controllare."
+
+
+def lettere(t):
+    return re.sub(r"[^A-Z]", "", (t or "").upper())
+
+
+def e_chimichiera(tipo):
+    """Tipo del giornale (letto male o no): CHIM., CHEM., CHEMICAL, OIL/CHEM..."""
+    return tipo == "CHIM." or bool(re.search(r"CHEM|CHIM", lettere(tipo)))
+
+
+def ro_ro_pax_dal_testo(tipo):
+    """Il giornale scrive a volte RO/PAX o RO/RO PASS.: e' un traghetto."""
+    t = lettere(tipo)
+    return "PAX" in t or ("RO" in t and "PASS" in t)
+
+
+def tipo_ais_numero(s):
+    try:
+        return int((s or {}).get("tipo") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def motivo_esclusione(n, dati):
+    """Perche' una nave dell'elenco non si visita (None se si visita)."""
+    tipo = n.get("tipo") or ""
+    if e_chimichiera(tipo):
+        return "nave chemical"
+    if ro_ro_pax_dal_testo(tipo):
+        return "ro-ro con passeggeri (dal giornale)"
+    if tipo in ("RO/RO", ""):
+        t = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or ""))
+        if 60 <= t <= 69:
+            return "ro-ro con passeggeri (tipo AIS: passeggeri)"
+    return None
+
+
+def registra_esclusa(dati, n, motivo, adesso=None):
+    """Si ricorda delle navi escluse: l'AIS, che le vede ferme in banchina, non deve
+    rimetterle nell'elenco al giro dopo."""
+    adesso = adesso or datetime.now(timezone.utc)
+    lista = dati.setdefault("escluse", [])
+    for e in lista:
+        if (n.get("imo") and e.get("imo") == n["imo"]) or (n.get("mmsi") and e.get("mmsi") == n["mmsi"]) \
+                or simili(e.get("nome"), n.get("nome")):
+            e.update({k: v for k, v in (("imo", n.get("imo")), ("mmsi", n.get("mmsi"))) if v})
+            e["quando"] = adesso.isoformat()
+            return
+    lista.append({"nome": n.get("nome"), "imo": n.get("imo") or "", "mmsi": n.get("mmsi") or "",
+                  "motivo": motivo, "quando": adesso.isoformat()})
+
+
+def e_esclusa(dati, imo, nome, mmsi=None):
+    for e in dati.get("escluse", []):
+        if (imo and e.get("imo") == imo) or (mmsi and e.get("mmsi") == mmsi) or simili(e.get("nome"), nome):
+            return True
+    return False
+
+
+def escludi_non_visitabili(dati, adesso):
+    """Toglie dall'elenco chemical e ro-ro con passeggeri (anche quelle gia' presenti
+    da giri precedenti) e segna le ro-ro di cui non si sa ancora nulla."""
+    tenute = []
+    for n in dati.get("navi", []):
+        motivo = motivo_esclusione(n, dati)
+        if motivo:
+            log("esclusa:", n.get("nome"), "-", motivo)
+            registra_esclusa(dati, n, motivo, adesso)
+            continue
+        if n.get("tipo") == "RO/RO":
+            noto = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or "")) > 0
+            nota = n.get("nota") or ""
+            if not noto and NOTA_RORO not in nota:
+                n["nota"] = (nota + " " + NOTA_RORO).strip()
+            elif noto and NOTA_RORO in nota:
+                n["nota"] = nota.replace(NOTA_RORO, "").strip()
+                if not n["nota"]:
+                    n.pop("nota")
+        tenute.append(n)
+    dati["navi"] = tenute
+    limite = (adesso - timedelta(days=14)).isoformat()
+    dati["escluse"] = [e for e in dati.get("escluse", []) if (e.get("quando") or "") >= limite]
+
+
 def navi_dal_giornale(righe, data):
+    """Navi dei terminal della mappa dal giornale del giorno `data`.
+    Restituisce (navi, escluse): le escluse sono chemical e ro-ro con passeggeri."""
     import leggi_giornale as L
     correggi_orari(righe)
     ieri = (datetime.fromisoformat(data) - timedelta(days=1)).date().isoformat()
     per_nave = {}
     scartate = []
+    escluse = []
     for r in righe:
         zona = r.get("zona") or "PRINCIPALE"
         if zona not in ZONE_BUONE:
@@ -261,6 +389,14 @@ def navi_dal_giornale(righe, data):
         if any(t in re.sub(r"[^A-Z.]", "", (r["tipo"] or "").upper()) for t in TIPI_ESCLUSI):
             if r.get("dove"):
                 scartate.append(pulisci_nome(r["nave"]) + " (" + (r["tipo"] or "").strip() + ")")
+            continue
+        motivo = ("nave chemical" if e_chimichiera(r["tipo"]) or e_chimichiera(tipo)
+                  else "ro-ro con passeggeri (dal giornale)" if ro_ro_pax_dal_testo(r["tipo"]) else None)
+        if motivo:
+            nome_e = pulisci_nome(r["nave"])
+            if nome_e:
+                escluse.append({"nome": nome_e, "imo": r["imo"] if r["imo_ok"] else "", "motivo": motivo,
+                                "in_mappa": bool((r.get("dove") or {}).get("terminal") in TERMINAL_MAPPA)})
             continue
         loa = misura(r.get("loa"), 25, 420)
         if loa and loa < 50:
@@ -298,8 +434,10 @@ def navi_dal_giornale(righe, data):
             n["dove"] = dove
             n["accosto"] = pulisci_accosto(r["accosto"], dove.get("molo"))
         n[campo] = r["ora"] or None
-        if zona == "VARIAZIONI":
-            n[campo + "_giorno"] = ieri                # cambio al giornale del giorno prima
+        # ogni orario si porta dietro il giorno a cui si riferisce (le variazioni sono
+        # cambi al giornale del giorno prima) e il giornale da cui viene
+        n[campo + "_giorno"] = ieri if zona == "VARIAZIONI" else data
+        n[campo + "_g"] = data
         if r["sezione"] == "MOVIMENTI":
             n["spostamento"] = pulisci_accosto(r["accosto"])
         if r.get("ora_dubbia"):
@@ -317,8 +455,11 @@ def navi_dal_giornale(righe, data):
                 n["nota"] = (n.get("nota", "") + " Orario letto male dal giornale: da verificare.").strip()
     if scartate:
         log("escluse (mezzi di servizio):", ", ".join(scartate))
+    visibili = sorted({e["nome"] + " (" + e["motivo"] + ")" for e in escluse if e["in_mappa"]})
+    if visibili:
+        log("escluse (non si visitano):", ", ".join(visibili))
     log("navi dei terminal:", len(navi))
-    return navi
+    return navi, escluse
 
 
 # ---------------------------------------------------------------- AIS
@@ -600,6 +741,8 @@ def aggiorna_presenze(dati, banchine, adesso):
         nome = (s.get("nome") or p.get("nome") or "").upper()
         if not nome:
             continue
+        if e_esclusa(dati, s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else "", nome, mmsi):
+            continue                                  # chemical o ro-ro con passeggeri: non si visita
         log("in banchina secondo l'AIS:", nome, dove["molo"], dove["lato"])
         dati["navi"].append({
             "nome": nome, "imo": s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else "",
@@ -636,43 +779,103 @@ def istante(giorno, o):
     return datetime.fromisoformat(giorno).replace(tzinfo=ROMA) + timedelta(minutes=v)
 
 
-def unisci_giornale(dati, nuove, data):
-    """Il giornale nuovo aggiorna l'elenco. Le navi di prima che non hanno
-    ancora una partenza passata restano: sono in porto dai giorni scorsi."""
+EVENTI = ("arrivo", "partenza")
+
+
+def normalizza_eventi(n):
+    """Ogni orario (arrivo, partenza) si porta dietro il giorno a cui si riferisce
+    (campo_giorno) e la data del giornale da cui viene (campo_g). Le navi salvate
+    prima di questa regola prendono il giorno del loro giornale."""
+    for campo in EVENTI:
+        if n.get(campo):
+            n.setdefault(campo + "_giorno", n.get("giorno"))
+            n.setdefault(campo + "_g", n.get("giorno"))
+        else:
+            for suf in ("_giorno", "_g"):
+                n.pop(campo + suf, None)
+
+
+def passa_ad_in_porto(n, oggi):
+    """Se l'arrivo e' di un giorno passato la nave e' arrivata: da ora e' 'in porto dal ...'.
+    (Un arrivo di oggi resta com'e', anche se l'ora e' passata: l'app lo sa leggere,
+    e uno previsto per stasera non va cancellato.)"""
+    arr = n.get("arrivo_giorno") or n.get("giorno")
+    if n.get("arrivo") and arr and arr < oggi:
+        n["in_porto_dal"] = n.get("in_porto_dal") or arr
+        n["arrivo"] = None
+        n.pop("arrivo_giorno", None); n.pop("arrivo_g", None)
+    elif not n.get("arrivo") and not n.get("in_porto_dal") and n.get("giorno") and n["giorno"] < oggi:
+        n["in_porto_dal"] = n["giorno"]
+
+
+def fondi_navi(v, n):
+    """v: la nave gia' in elenco; n: la stessa nave letta ora da un giornale.
+    - Orari: per ogni evento vale quello del giorno piu' avanti; a parita' di giorno
+      vale il giornale piu' recente (le variazioni correggono il giornale prima).
+    - Dati fissi (posto, misure, tipo): vale il giornale piu' recente, l'altro riempie i vuoti.
+    Funziona anche se si legge un giornale piu' vecchio di uno gia' letto."""
+    n_recente = (n.get("giorno") or "") >= (v.get("giorno") or "")
+    base, altra = (n, v) if n_recente else (v, n)
+    for campo in EVENTI:
+        con = [x for x in (v, n) if x.get(campo)]
+        scelto = {}
+        if con:
+            m = max(con, key=lambda x: (x.get(campo + "_giorno") or "", x.get(campo + "_g") or "", x is n))
+            scelto = {suf: m.get(campo + suf) for suf in ("", "_giorno", "_g")}
+        for suf in ("", "_giorno", "_g"):          # prima si svuota (m puo' essere proprio base), poi si riempie
+            base.pop(campo + suf, None)
+        for suf, valore in scelto.items():
+            if valore is not None:
+                base[campo + suf] = valore
+    for campo in ("mmsi", "visto_banchina", "loa", "larg", "tipo", "imo"):
+        if altra.get(campo) and not base.get(campo):
+            base[campo] = altra[campo]
+    if base.get("arrivo"):
+        base.pop("in_porto_dal", None)           # sta arrivando: la sosta riparte dall'arrivo
+    else:
+        ip = base.get("in_porto_dal") or altra.get("in_porto_dal")
+        if ip:
+            base["in_porto_dal"] = ip
+    base["fonti"] = sorted(set(base.get("fonti", []) + ["giornale"]))
+    return base
+
+
+def unisci_giornale(dati, nuove, data, adesso=None):
+    """Il giornale (di qualunque giorno) aggiorna l'elenco. Le navi di prima che non
+    sono nel giornale nuovo restano finche' non risultano partite: se stanno in porto
+    piu' giorni sono 'in porto dal ...'. Gli orari di prima non si perdono."""
+    adesso = adesso or datetime.now(timezone.utc)
+    oggi = adesso.astimezone(ROMA).date().isoformat()
     vecchie = {chiave_nave(n): n for n in dati.get("navi", [])}
+    for v in vecchie.values():
+        normalizza_eventi(v)
     risultato = []
     for n in nuove:
         n["giorno"] = data
         n["fonti"] = ["giornale"]
+        normalizza_eventi(n)
         v = vecchie.pop(chiave_nave(n), None)
         if v is None:
             v = next((x for k, x in list(vecchie.items()) if simili(x["nome"], n["nome"])), None)
             if v is not None:
                 vecchie.pop(chiave_nave(v), None)
         if v is not None:
-            for campo in ("mmsi", "visto_banchina") + (() if n.get("arrivo") else ("in_porto_dal",)):
-                if v.get(campo):
-                    n.setdefault(campo, v[campo])
-            if v.get("loa") and not n.get("loa"):
-                n["loa"] = v["loa"]
-            if not n.get("arrivo") and (v.get("in_porto_dal") or v.get("arrivo")):
-                n.setdefault("in_porto_dal", v.get("in_porto_dal") or v.get("giorno"))
+            n = fondi_navi(v, n)
+            n.setdefault("giorno", data)
+        passa_ad_in_porto(n, oggi)
         risultato.append(n)
     for v in vecchie.values():
         if v.get("giorno") and v["giorno"] < data:
-            part = istante(v.get("partenza_giorno") or v["giorno"], v.get("partenza"))
-            if part is not None:
-                continue                         # aveva la partenza in un giorno passato: se ne occupa la pulizia
-            # arrivata (o gia' in porto) e senza partenza: resta, ora e' "in porto dal ..."
-            if v.get("arrivo") or v.get("in_porto_dal"):
-                v["in_porto_dal"] = v.get("in_porto_dal") or v["giorno"]
-                v["arrivo"] = None
-                v.pop("arrivo_giorno", None); v.pop("partenza_giorno", None)
-                v["giorno"] = data
+            part = istante(v.get("partenza_giorno") or v["giorno"], v.get("partenza")) if v.get("partenza") else None
+            if part is not None and adesso > part + timedelta(hours=3):
+                continue                         # ripartita da un pezzo
+            if not (v.get("arrivo") or v.get("in_porto_dal") or part is not None):
+                continue                         # niente da cui capire che e' ancora in porto
+            vecchio_giorno = v["giorno"] < oggi
+            passa_ad_in_porto(v, oggi)
+            if vecchio_giorno:
                 v["fonti"] = sorted(set(v.get("fonti", []) + ["memoria"]))
-                risultato.append(v)
-        else:
-            risultato.append(v)
+        risultato.append(v)
     dati["navi"] = risultato
 
 
@@ -763,24 +966,50 @@ def main():
 
     sess = requests.Session()
     sess.headers["User-Agent"] = "Mozilla/5.0 (moli-porto; aggiornamento previsioni)"
-    pdf, pagina, data = None, "", dati.get("data")
+    oggi_r = adesso.astimezone(ROMA).date()
+    # giornali gia' letti (i dati salvati prima di questa regola ne avevano uno solo: 'data')
+    letti = set(dati.get("giornali") or ([dati["data"]] if dati.get("data") else []))
+    pagina, da_leggere = "", []          # da_leggere: [(data, pdf)]
     if "--pdf" in sys.argv:
         i = sys.argv.index("--pdf")
-        pdf = open(sys.argv[i + 1], "rb").read()
-        data = sys.argv[i + 2] if len(sys.argv) > i + 2 else data
+        da_leggere = [(sys.argv[i + 2] if len(sys.argv) > i + 2 else dati.get("data"), open(sys.argv[i + 1], "rb").read())]
     else:
         try:
-            data_sito, campi, pagina = data_giornale_sul_sito(sess)
-            log("giornale sul sito:", data_sito, "| gia' letto:", dati.get("data"))
-            if forza or data_sito != dati.get("data"):
-                pdf = scarica_giornale(sess, campi); data = data_sito
+            note, pagina = con_tentativi(lambda: note_sul_sito(sess))
+            # servono ieri (navi che restano piu' giorni), oggi e domani: ciascuno col suo giorno
+            utili = [(d, b) for d, b in note if (oggi_r - timedelta(days=1)).isoformat() <= d <= (oggi_r + timedelta(days=1)).isoformat()]
+            log("giornali gia' letti:", sorted(letti) or "nessuno", "| utili sul sito:", [d for d, _ in utili])
+            for d, b in sorted(x for x in utili if forza or x[0] not in letti):
+                try:
+                    da_leggere.append((d, con_tentativi(lambda: scarica_giornale(sess, b))))
+                except Exception as e:
+                    log(f"giornale del {d} non scaricato:", type(e).__name__, e)
+            if oggi_r.isoformat() not in letti and oggi_r.isoformat() not in [d for d, _ in da_leggere]:
+                log("ATTENZIONE: il giornale di oggi", oggi_r.isoformat(), "non e' ne' letto ne' scaricabile")
         except Exception as e:
             log("sito non raggiungibile:", type(e).__name__, e)
-    if pdf:
-        log("leggo il giornale del", data, len(pdf), "byte")
-        unisci_giornale(dati, navi_dal_giornale(leggi_pdf(pdf), data), data)
-        dati.update({"data": data, "letto": adesso.isoformat(),
-                     "fonte": "Capitaneria di Porto di Genova, previsioni del " + data})
+    for data, pdf in da_leggere:
+        try:
+            log("leggo il giornale del", data, len(pdf), "byte")
+            righe, date_titoli = leggi_pdf(pdf)
+            if len(righe) < 3:
+                raise RuntimeError(f"lettura fallita: solo {len(righe)} righe trovate")
+            if date_titoli and data not in date_titoli:
+                log("ATTENZIONE: nel PDF si legge", sorted(set(date_titoli)), "ma il sito lo dava come", data)
+            navi, escluse = navi_dal_giornale(righe, data)
+            for e in escluse:
+                registra_esclusa(dati, e, e["motivo"], adesso)
+            unisci_giornale(dati, navi, data, adesso)
+            letti.add(data)
+            dati.update({"letto": adesso.isoformat()})
+        except Exception as e:
+            log(f"giornale del {data} non letto, si riprova al prossimo giro:", type(e).__name__, e)
+    if letti:
+        recenti = sorted(d for d in letti if d >= (oggi_r - timedelta(days=7)).isoformat())
+        passati = [d for d in recenti if d <= oggi_r.isoformat()]
+        dati["giornali"] = recenti
+        dati["data"] = oggi_r.isoformat() if oggi_r.isoformat() in recenti else (passati[-1] if passati else recenti[0])
+        dati["fonte"] = "Capitaneria di Porto di Genova, previsioni del " + dati["data"]
     if pagina:
         try:
             applica_conferme(dati, leggi_tabelle_sito(pagina))
@@ -798,6 +1027,7 @@ def main():
         dati["ais"] = bool(pos)
     else:
         dati["ais"] = False
+    escludi_non_visitabili(dati, adesso)      # chemical e ro-ro con passeggeri (dopo l'AIS: serve il suo tipo)
     applica_taratura(dati)
     riassunto_taratura(dati)
     # la memoria dei giorni di taratura non serve oltre una settimana

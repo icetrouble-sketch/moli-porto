@@ -1,6 +1,6 @@
 /* Tiene l'app in memoria sul telefono: dopo la prima apertura funziona
    anche senza segnale. Cambia il numero della cache dopo ogni modifica. */
-const CACHE = "moli-porto-13";
+const CACHE = "moli-porto-14";
 const FILE = ["./", "./index.html", "./dati.enc.js", "./contesto.js", "./navi.enc.json",
               "./manifest.webmanifest", "./icone/icona-180.png", "./icone/icona-192.png"];
 
