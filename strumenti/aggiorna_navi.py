@@ -29,8 +29,22 @@ MOLI_BOX = (44.3960, 44.4125, 8.8720, 8.9200)
 AIS_BOX = [[42.00, 6.00], [44.60, 11.00]]   # da Marsiglia all'Elba: le navi in arrivo si vedono ore prima
 
 
+RIEPILOGO = []
+
+
 def log(*a):
-    print(datetime.now(ROMA).strftime("%H:%M:%S"), *a, flush=True)
+    riga = " ".join([datetime.now(ROMA).strftime("%H:%M:%S")] + [str(x) for x in a])
+    print(riga, flush=True)
+    RIEPILOGO.append(riga)
+
+
+def riepilogo_actions():
+    """In GitHub Actions il riepilogo del giro diventa un'annotazione leggibile anche
+    senza scaricare i log (utile per controllare da fuori che il giro sia andato bene)."""
+    if os.environ.get("GITHUB_ACTIONS") and RIEPILOGO:
+        testo = "\n".join(RIEPILOGO)[-30000:]
+        testo = testo.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::notice title=Riepilogo del giro::" + testo, flush=True)
 
 
 # ---------------------------------------------------------------- cifratura
@@ -1058,4 +1072,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException as e:
+        log("ERRORE:", type(e).__name__, e)
+        raise
+    finally:
+        riepilogo_actions()
