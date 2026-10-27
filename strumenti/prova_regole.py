@@ -121,6 +121,112 @@ class Esclusioni(unittest.TestCase):
         self.assertEqual(d["navi"], [])                            # esclusa: non torna
 
 
+BANCHINE_PROVA = {"MOLO": {"terminal": "rinfuse", "ponente": [[44.4000, 8.9000], [44.4010, 8.9000]],
+                           "acqua": {"ponente": [0, -1]}}}
+
+
+def posizione(adesso, minuti_fa=0, lat=44.4005, lon=8.8999, sog=0.0, cog=None):
+    from datetime import timedelta
+    return {"lat": lat, "lon": lon, "sog": sog, "cog": cog, "stato": 5, "nome": "X",
+            "quando": (adesso - timedelta(minutes=minuti_fa)).isoformat()}
+
+
+class PresenzaInBanchina(unittest.TestCase):
+    """Sulla mappa solo le navi che l'AIS vede ferme in banchina; le altre hanno uno stato a parte."""
+    adesso = quando("2026-10-27", "10:00")
+
+    def nave(self, mmsi="247000009", **extra):
+        n = {"nome": "SIGMA", "imo": "", "mmsi": mmsi, "tipo": "CONT.", "fonti": ["giornale"], "giorno": "2026-10-27",
+             "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente", "in_rada": False}}
+        n.update(extra)
+        return n
+
+    # --- navi da non visitare ferme alla banchina
+    def test_esclusa_ferma_in_banchina_compare_come_da_non_visitare(self):
+        d = {"navi": [], "statici": {"247000003": {"imo": "9074729", "nome": "THETA", "tipo": 80, "lung": 150}},
+             "registro": {"247000003": posizione(self.adesso)}}
+        A.registra_esclusa(d, {"nome": "THETA", "imo": "9074729", "tipo": "CHIM."}, "nave chemical", self.adesso)
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.adesso)
+        self.assertEqual([(n["nome"], n["motivo"], n["dove"]["terminal"], n["ais"]["ormeggiata"]) for n in d["non_visitare"]],
+                         [("THETA", "nave chemical", "rinfuse", True)])
+
+    def test_esclusa_non_ferma_alla_banchina_non_si_mette(self):
+        casi = {"in movimento": posizione(self.adesso, sog=6.0),
+                "lontana dalla banchina": posizione(self.adesso, lat=44.30),
+                "posizione di 7 ore fa": posizione(self.adesso, minuti_fa=7 * 60),
+                "mai vista": None}
+        for nome, pos in casi.items():
+            d = {"navi": [], "statici": {"247000003": {"imo": "9074729", "nome": "THETA", "tipo": 80, "lung": 150}},
+                 "registro": {"247000003": pos} if pos else {}}
+            A.registra_esclusa(d, {"nome": "THETA", "imo": "9074729"}, "nave chemical", self.adesso)
+            A.costruisci_non_visitare(d, BANCHINE_PROVA, self.adesso)
+            self.assertEqual(d["non_visitare"], [], nome)
+
+    def test_cisterna_solo_ais_ferma_in_banchina_e_da_non_visitare(self):
+        d = {"navi": [], "escluse": [], "statici": {"247000009": {"imo": "9074729", "nome": "SIGMA", "tipo": 82, "lung": 150}},
+             "registro": {"247000009": posizione(self.adesso)}}
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.adesso)
+        self.assertEqual([(n["nome"], n["motivo"]) for n in d["non_visitare"]], [("SIGMA", "cisterna (da confermare)")])
+        A.ESCLUDI_CISTERNE = False
+        try:
+            A.costruisci_non_visitare(d, BANCHINE_PROVA, self.adesso)
+            self.assertEqual(d["non_visitare"], [])               # interruttore spento: e' una nave da visitare
+        finally:
+            A.ESCLUDI_CISTERNE = True
+
+    def test_una_nave_da_visitare_non_finisce_anche_tra_le_non_visitare(self):
+        d = {"navi": [self.nave()], "escluse": [], "statici": {"247000009": {"nome": "SIGMA", "tipo": 82, "lung": 150}},
+             "registro": {"247000009": posizione(self.adesso)}}
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.adesso)
+        self.assertEqual(d["non_visitare"], [])
+
+    # --- quanto vale una posizione
+    def test_posizione_di_nave_ferma_vale_sei_ore_quella_in_movimento_tre(self):
+        for minuti, sog, atteso in ((5 * 60, 0.0, True), (7 * 60, 0.0, False), (2 * 60, 8.0, True), (4 * 60, 8.0, False)):
+            d = {"navi": [self.nave()], "statici": {}, "registro": {"247000009": posizione(self.adesso, minuti, sog=sog, cog=0)}}
+            A.aggiorna_presenze(d, BANCHINE_PROVA, self.adesso)
+            self.assertEqual("ais" in d["navi"][0], atteso, (minuti, sog))
+
+    # --- si allontana / in avvicinamento
+    def test_nave_che_lascia_la_banchina_e_in_uscita_per_un_ora_e_mezza(self):
+        from datetime import timedelta
+        visto = (self.adesso - timedelta(hours=1)).isoformat()
+        d = {"navi": [self.nave(visto_banchina=visto)], "statici": {},
+             "registro": {"247000009": posizione(self.adesso, 5, lat=44.30, sog=6.0, cog=180)}}   # verso sud, via da Genova
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.adesso)
+        n = d["navi"][0]
+        self.assertTrue(n["ais"].get("in_uscita"))
+        self.assertNotIn("eta_iso", n["ais"])
+        A.pulizia(d, self.adesso + timedelta(minutes=30))
+        self.assertEqual(len(d["navi"]), 1)                          # mezz'ora dopo: ancora 'si allontana'
+        A.pulizia(d, self.adesso + timedelta(hours=2))
+        self.assertEqual(d["navi"], [])                              # due ore dopo: uscita, si toglie
+
+    def test_nave_in_arrivo_non_e_in_uscita(self):
+        d = {"navi": [self.nave()], "statici": {},
+             "registro": {"247000009": posizione(self.adesso, 5, lat=44.0, sog=12.0, cog=0)}}      # verso nord, verso Genova
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.adesso)
+        a = d["navi"][0]["ais"]
+        self.assertNotIn("in_uscita", a)
+        self.assertIn("eta_iso", a)
+        self.assertNotIn("uscita_vista", d["navi"][0])
+
+    def test_visto_in_banchina_tanto_tempo_fa_non_conta_come_uscita(self):
+        from datetime import timedelta
+        d = {"navi": [self.nave(visto_banchina=(self.adesso - timedelta(hours=30)).isoformat())], "statici": {},
+             "registro": {"247000009": posizione(self.adesso, 5, lat=44.0, sog=12.0, cog=0)}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.adesso)
+        self.assertNotIn("in_uscita", d["navi"][0]["ais"])
+
+    def test_tornata_ferma_in_banchina_si_cancella_l_uscita(self):
+        from datetime import timedelta
+        d = {"navi": [self.nave(uscita_vista=(self.adesso - timedelta(minutes=20)).isoformat())], "statici": {},
+             "registro": {"247000009": posizione(self.adesso)}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.adesso)
+        self.assertTrue(d["navi"][0]["ais"]["ormeggiata"])
+        self.assertNotIn("uscita_vista", d["navi"][0])
+
+
 class ZonaTraPagine(unittest.TestCase):
     def _pdf_due_pagine(self):
         from PIL import Image

@@ -25,6 +25,8 @@ TERMINAL_MAPPA = {"imt", "sangiorgio", "gmt", "spinelli", "rinfuse", "bettolo", 
 IMBOCCATURA = (44.3985, 8.8960)
 # area dei moli: dentro e ferma = in banchina
 MOLI_BOX = (44.3960, 44.4125, 8.8720, 8.9200)
+VALIDITA_POSIZIONE = timedelta(hours=3)     # quanto vale l'ultima posizione di una nave in movimento
+VALIDITA_FERMA = timedelta(hours=6)         # ... e di una nave ferma alla banchina
 # zona in cui ascoltare l'AIS: Mar Ligure e dintorni
 AIS_BOX = [[42.00, 6.00], [44.60, 11.00]]   # da Marsiglia all'Elba: le navi in arrivo si vedono ore prima
 
@@ -358,11 +360,12 @@ def registra_esclusa(dati, n, motivo, adesso=None):
     for e in lista:
         if (n.get("imo") and e.get("imo") == n["imo"]) or (n.get("mmsi") and e.get("mmsi") == n["mmsi"]) \
                 or simili(e.get("nome"), n.get("nome")):
-            e.update({k: v for k, v in (("imo", n.get("imo")), ("mmsi", n.get("mmsi"))) if v})
+            e.update({k: v for k, v in (("imo", n.get("imo")), ("mmsi", n.get("mmsi")), ("tipo", n.get("tipo"))) if v})
+            e["motivo"] = motivo
             e["quando"] = adesso.isoformat()
             return
     lista.append({"nome": n.get("nome"), "imo": n.get("imo") or "", "mmsi": n.get("mmsi") or "",
-                  "motivo": motivo, "quando": adesso.isoformat()})
+                  "tipo": n.get("tipo") or "", "motivo": motivo, "quando": adesso.isoformat()})
 
 
 def e_esclusa(dati, imo, nome, mmsi=None):
@@ -727,12 +730,14 @@ def aggiorna_presenze(dati, banchine, adesso):
         if not p:
             continue
         quando = datetime.fromisoformat(p["quando"])
-        if adesso - quando > timedelta(hours=3):
+        dove = alla_banchina(p["lat"], p["lon"], banchine) if p["sog"] < 0.7 else None
+        # una nave in movimento cambia posto in fretta: la sua posizione vale 3 ore; una ferma in banchina
+        # resta li' e il suo segnale puo' mancare per qualche giro: la sua posizione vale di piu'
+        if adesso - quando > (VALIDITA_FERMA if dove else VALIDITA_POSIZIONE):
             continue                                          # posizione vecchia: non si usa
         d = distanza_nm((p["lat"], p["lon"]), IMBOCCATURA)
         a = {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
              "dist_nm": round(d, 1), "quando": quando.astimezone(ROMA).strftime("%H.%M")}
-        dove = alla_banchina(p["lat"], p["lon"], banchine) if p["sog"] < 0.7 else None
         if dove:
             impara(dati, n.get("dove_giornale"), dove)
             a["ormeggiata"] = True; a["s_m"] = dove["s_m"]
@@ -742,10 +747,19 @@ def aggiorna_presenze(dati, banchine, adesso):
                          "in_rada": False}
             n["visto_banchina"] = quando.isoformat()
             n.setdefault("in_porto_dal", oggi)
+            n.pop("uscita_vista", None)
         elif p["stato"] == 1 or (d < 8 and p["sog"] < 0.7):
             a["ancora"] = True
         elif p["sog"] >= 2:
-            if MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]:
+            dentro = MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]
+            era_ferma = False
+            if n.get("visto_banchina"):
+                era_ferma = adesso - datetime.fromisoformat(n["visto_banchina"]) <= timedelta(hours=12)
+            if era_ferma and (dentro or not verso_genova(p)):
+                # era ferma alla nostra banchina e adesso si muove: se ne sta andando
+                a["in_uscita"] = True
+                n["uscita_vista"] = quando.isoformat()
+            elif dentro:
                 a["manovra"] = True
             elif verso_genova(p) and d < 900:
                 # in rotta verso Genova: ora stimata d'arrivo (+15% per gli ultimi rallentamenti)
@@ -793,6 +807,54 @@ def aggiorna_presenze(dati, banchine, adesso):
                     "dist_nm": round(distanza_nm((p["lat"], p["lon"]), IMBOCCATURA), 1),
                     "quando": quando.astimezone(ROMA).strftime("%H.%M"), "ormeggiata": True, "s_m": dove["s_m"]},
         })
+
+
+def costruisci_non_visitare(dati, banchine, adesso):
+    """Le navi che non si visitano (chemical, ro-ro con passeggeri, cisterne) ma che l'AIS vede
+    davvero ferme a una banchina della mappa: l'app le disegna in grigio con 'da non visitare',
+    cosi' chi guarda sa che sono lì e che si lasciano stare. Se non sono ferme alla banchina
+    non si mettono, anche se il giornale le prevede."""
+    reg, sta = dati.get("registro", {}), dati.get("statici", {})
+    in_elenco = {n.get("mmsi") for n in dati.get("navi", []) if n.get("mmsi")}
+    trovate = {}                                              # mmsi -> (nome, imo, tipo, motivo)
+    for e in dati.get("escluse", []):
+        mmsi = e.get("mmsi") or trova_mmsi({"imo": e.get("imo") or "", "nome": e.get("nome") or ""}, dati)
+        if mmsi:
+            e["mmsi"] = mmsi
+            trovate[mmsi] = (e.get("nome"), e.get("imo"), e.get("tipo"), e.get("motivo"))
+    if ESCLUDI_CISTERNE:                                      # cisterne che il giornale non nomina
+        for mmsi, s in sta.items():
+            if mmsi not in trovate and tipo_ais(s.get("tipo")) == "TANK" and (s.get("lung") or 0) >= 100:
+                trovate[mmsi] = (s.get("nome"), s.get("imo"), "TANK", "cisterna (da confermare)")
+    risultato = []
+    for mmsi, (nome, imo, tipo, motivo) in trovate.items():
+        p = reg.get(mmsi)
+        if not p or mmsi in in_elenco or p["sog"] >= 0.7:
+            continue
+        quando = datetime.fromisoformat(p["quando"])
+        if adesso - quando > VALIDITA_FERMA:
+            continue
+        dove = alla_banchina(p["lat"], p["lon"], banchine)
+        if not dove:
+            continue
+        s = sta.get(mmsi, {})
+        nome = (s.get("nome") or nome or p.get("nome") or "").upper()
+        if not nome:
+            continue
+        imo = s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else (imo or "")
+        log("da non visitare, ferma in banchina:", nome, "-", motivo, "-", dove["molo"], dove["lato"])
+        risultato.append({
+            "nome": nome, "imo": imo, "mmsi": mmsi, "tipo": tipo or tipo_ais(s.get("tipo")) or "",
+            "loa": s.get("lung") or None, "larg": s.get("larg") or None, "motivo": motivo,
+            "accosto": dove["molo"] + " " + ("TESTATA" if dove["lato"] == "testata" else dove["lato"][:3].upper() + "."),
+            "dove": {"terminal": dove["terminal"], "molo": dove["molo"],
+                     "lato": None if dove["lato"] == "testata" else dove["lato"],
+                     "punto": "testata" if dove["lato"] == "testata" else None, "in_rada": False},
+            "ais": {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
+                    "dist_nm": round(distanza_nm((p["lat"], p["lon"]), IMBOCCATURA), 1),
+                    "quando": quando.astimezone(ROMA).strftime("%H.%M"), "ormeggiata": True, "s_m": dove["s_m"]},
+        })
+    dati["non_visitare"] = sorted(risultato, key=lambda x: x["nome"])
 
 
 # ---------------------------------------------------------------- memoria tra i giorni
@@ -932,7 +994,13 @@ def pulizia(dati, adesso):
                 n["ritardo"] = True                       # doveva partire, ma e' ancora li'
             else:
                 log("partita:", n["nome"]); continue
-        if visto and not a.get("ormeggiata") and a.get("vel", 0) >= 2 and a.get("dist_nm", 0) > 1 and not n.get("arrivo"):
+        uscita = datetime.fromisoformat(n["uscita_vista"]) if n.get("uscita_vista") else None
+        if uscita and not a.get("ormeggiata"):
+            # l'AIS l'ha vista andarsene: per un'ora e mezza resta 'si allontana', poi si toglie
+            if adesso - uscita > timedelta(minutes=90):
+                log("uscita dal porto (AIS):", n["nome"]); continue
+        elif visto and not a.get("ormeggiata") and not a.get("in_uscita") \
+                and a.get("vel", 0) >= 2 and a.get("dist_nm", 0) > 1 and not n.get("arrivo"):
             log("uscita dal porto (AIS):", n["nome"]); continue
         fonti = n.get("fonti", ["giornale"])
         if "giornale" not in fonti and (n.get("loa") or 0) < 100:
@@ -1057,8 +1125,9 @@ def main():
     chiave_ais = os.environ.get("AISSTREAM_KEY")
     if chiave_ais:
         ora = adesso.astimezone(ROMA)
-        # il primo giro del mattino ascolta di piu': le navi ferme trasmettono ogni 3 minuti
-        secondi = int(os.environ.get("AIS_SECONDI") or (360 if ora.hour == 7 and ora.minute < 30 else 180))
+        # Una nave ferma trasmette la posizione ogni 3 minuti, ma nome e IMO solo ogni 6: con 3 minuti
+        # di ascolto il nome si prende una volta su due. Si ascolta quindi 8 minuti (12 al primo giro del mattino).
+        secondi = int(os.environ.get("AIS_SECONDI") or (720 if ora.hour == 7 and ora.minute < 30 else 480))
         pos, statici = asyncio.run(ascolta_ais(chiave_ais, secondi))
         aggiorna_registro(dati, pos, statici, adesso)
         aggiorna_presenze(dati, banchine, adesso)
@@ -1066,6 +1135,7 @@ def main():
     else:
         dati["ais"] = False
     escludi_non_visitabili(dati, adesso)      # chemical e ro-ro con passeggeri (dopo l'AIS: serve il suo tipo)
+    costruisci_non_visitare(dati, banchine, adesso)   # quelle escluse che sono davvero ferme alle nostre banchine
     applica_taratura(dati)
     riassunto_taratura(dati)
     # la memoria dei giorni di taratura non serve oltre una settimana
