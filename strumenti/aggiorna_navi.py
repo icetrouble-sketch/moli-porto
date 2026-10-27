@@ -161,87 +161,151 @@ def minuti(o):
     return int(m.group(1)) * 60 + int(m.group(2)) if m else None
 
 
-def correggi_orari(righe):
-    """Nel giornale gli orari di ogni sezione sono in ordine crescente
-    (prima ALBA e A.M.). Si tiene la sequenza crescente piu' lunga; un orario
-    fuori sequenza e' letto male: si prova la correzione di una cifra che lo
-    rimette in ordine, e resta comunque segnato come dubbio."""
-    blocchi, cur = [], []
+def blocchi_ordinati(righe):
+    """Gruppi di righe in cui il giornale e' in ordine di orario.
+    Giornale a sezioni: ARRIVI, poi PARTENZE, poi MOVIMENTI, ciascuna in ordine.
+    Giornale "misto": tutta la zona in un'unica lista in ordine di orario."""
+    zone, cur = [], []
     for i, r in enumerate(righe):
-        if cur and righe[cur[-1]]["sezione"] != r["sezione"]:
-            blocchi.append(cur); cur = []
+        if cur and righe[cur[-1]].get("zona") != r.get("zona"):
+            zone.append(cur); cur = []
         cur.append(i)
     if cur:
-        blocchi.append(cur)
-    for blocco in blocchi:
-        if righe[blocco[0]]["sezione"] not in ("ARRIVI", "PARTENZE"):
-            continue
+        zone.append(cur)
+    out = []
+    for z in zone:
+        cambi = sum(1 for a, b in zip(z, z[1:]) if righe[a]["sezione"] != righe[b]["sezione"])
+        if cambi > 3:
+            out.append(z)                         # misto
+        else:
+            parte = [z[0]]
+            for a, b in zip(z, z[1:]):
+                if righe[a]["sezione"] != righe[b]["sezione"]:
+                    out.append(parte); parte = []
+                parte.append(b)
+            out.append(parte)
+    return out
+
+
+def correggi_orari(righe):
+    """Si tiene la sequenza crescente piu' lunga; un orario fuori sequenza e'
+    letto male: si prova la correzione di una cifra che lo rimette in ordine
+    (resta segnato come dubbio). Un orario non letto si stima tra il
+    precedente e il successivo, anche questo come dubbio."""
+    for blocco in blocchi_ordinati(righe):
         idx = [i for i in blocco if minuti(righe[i]["ora"]) is not None]
         v = [minuti(righe[i]["ora"]) for i in idx]
-        if len(v) < 2:
-            continue
-        # sottosequenza non decrescente piu' lunga
-        L = [1] * len(v); P = [-1] * len(v)
-        for a in range(len(v)):
-            for b in range(a):
-                if v[b] <= v[a] and L[b] + 1 > L[a]:
-                    L[a], P[a] = L[b] + 1, b
-        k = max(range(len(v)), key=lambda x: L[x]); buoni = set()
-        while k >= 0:
-            buoni.add(k); k = P[k]
-        for j in range(len(v)):
-            if j in buoni:
+        if len(v) >= 2:
+            L = [1] * len(v); P = [-1] * len(v)
+            for a in range(len(v)):
+                for b in range(a):
+                    if v[b] <= v[a] and L[b] + 1 > L[a]:
+                        L[a], P[a] = L[b] + 1, b
+            k = max(range(len(v)), key=lambda x: L[x]); buoni = set()
+            while k >= 0:
+                buoni.add(k); k = P[k]
+            for j in range(len(v)):
+                if j in buoni:
+                    continue
+                prima = max([v[b] for b in buoni if b < j] or [0])
+                dopo = min([v[b] for b in buoni if b > j] or [24 * 60 - 1])
+                i = idx[j]; ora = righe[i]["ora"]
+                candidati = set()
+                for pos in (0, 1, 3, 4):
+                    for c in "0123456789":
+                        t = ora[:pos] + c + ora[pos + 1:]
+                        w = minuti(t)
+                        if w is not None and w < 24 * 60 and prima <= w <= dopo and t[3:] in ("00", "15", "30", "31", "45", "59"):
+                            candidati.add(t)
+                scelta = sorted(candidati)[0] if len(candidati) == 1 else None
+                log("orario fuori ordine:", righe[i]["nave"], ora, "->", scelta or "dubbio")
+                righe[i]["ora_letta"] = ora
+                righe[i]["ora"] = scelta or ora
+                righe[i]["ora_dubbia"] = True
+        # orari non letti: tra il precedente e il successivo
+        for pos, i in enumerate(blocco):
+            if righe[i]["ora"] or not righe[i].get("imo_ok"):
                 continue
-            prima = max([v[b] for b in buoni if b < j] or [0])
-            dopo = min([v[b] for b in buoni if b > j] or [24 * 60 - 1])
-            i = idx[j]; ora = righe[i]["ora"]
-            candidati = set()
-            for pos in (0, 1, 3, 4):
-                for c in "0123456789":
-                    t = ora[:pos] + c + ora[pos + 1:]
-                    w = minuti(t)
-                    if w is not None and w < 24 * 60 and prima <= w <= dopo and t[3:] in ("00", "15", "30", "45", "59"):
-                        candidati.add(t)
-            scelta = sorted(candidati)[0] if len(candidati) == 1 else None
-            log("orario fuori ordine:", righe[i]["nave"], ora, "->", scelta or "dubbio")
-            righe[i]["ora_letta"] = ora
-            righe[i]["ora"] = scelta or ora
-            righe[i]["ora_dubbia"] = True
+            prec = [righe[k]["ora"] for k in blocco[:pos] if minuti(righe[k]["ora"]) is not None]
+            succ = [righe[k]["ora"] for k in blocco[pos + 1:] if minuti(righe[k]["ora"]) is not None]
+            if prec and succ:
+                righe[i]["ora"] = prec[-1]
+                righe[i]["ora_dubbia"] = True
+                righe[i]["nota_ora"] = "tra le " + prec[-1].replace(".", ":") + " e le " + succ[0].replace(".", ":")
+                log("orario non letto:", righe[i]["nave"], "->", righe[i]["nota_ora"])
+
+
+# mezzi che non sono navi da visitare: draghe, pontoni, motobarche, rimorchiatori,
+# bettoline di rifornimento, gru, yacht
+TIPI_ESCLUSI = ("HOPPER", "PONT", "MB", "M.B", "R.RE", "RIM", "CRANE", "BETT", "YACHT", "N.C", "BUNK", "SUPPLY", "TUG")
+ZONE_BUONE = ("PRINCIPALE", "VARIAZIONI")
+
+
+def da_a(accosto):
+    """'DA RADA A CANEPA LEV. RAD.' -> ('RADA', 'CANEPA LEV. RAD.')"""
+    m = re.match(r"\s*\W*D\s*A\s+(.*?)\s+A\s+(.*)$", (accosto or "").upper())
+    return (m.group(1), m.group(2)) if m else (None, None)
 
 
 def navi_dal_giornale(righe, data):
-    # dopo i MOVIMENTI vengono i mezzi diga (rimorchiatori, draghe): non servono
-    visto_mov = False
-    for r in righe:
-        if r["sezione"] == "MOVIMENTI":
-            visto_mov = True
-        elif visto_mov and r["sezione"] in ("ARRIVI", "PARTENZE"):
-            r["sezione"] = "MEZZI DIGA " + r["sezione"]
+    import leggi_giornale as L
     correggi_orari(righe)
+    ieri = (datetime.fromisoformat(data) - timedelta(days=1)).date().isoformat()
     per_nave = {}
+    scartate = []
     for r in righe:
-        if r["sezione"] not in ("ARRIVI", "PARTENZE") or not r.get("dove"):
+        zona = r.get("zona") or "PRINCIPALE"
+        if zona not in ZONE_BUONE:
+            continue                                   # Multedo, Voltri, mezzi della diga
+        tipo = pulisci_tipo(r["tipo"])
+        if any(t in re.sub(r"[^A-Z.]", "", (r["tipo"] or "").upper()) for t in TIPI_ESCLUSI):
+            if r.get("dove"):
+                scartate.append(pulisci_nome(r["nave"]) + " (" + (r["tipo"] or "").strip() + ")")
             continue
-        if r["dove"]["terminal"] not in TERMINAL_MAPPA:
+        loa = misura(r.get("loa"), 25, 420)
+        if loa and loa < 50:
+            continue                                   # mezzi piccoli di servizio
+        dove = r.get("dove"); campo = None
+        if r["sezione"] == "ARRIVI":
+            campo = "arrivo"
+        elif r["sezione"] == "PARTENZE":
+            campo = "partenza"
+        elif r["sezione"] == "MOVIMENTI":
+            # spostamento: se va verso una nostra banchina e' un arrivo, se ne esce e' una partenza
+            orig, dest = da_a(r["accosto"])
+            d_dest = L.riconosci_accosto(dest) if dest else None
+            d_orig = L.riconosci_accosto(orig) if orig else None
+            if d_dest and d_dest["terminal"] in TERMINAL_MAPPA:
+                dove, campo = d_dest, "arrivo"
+            elif d_orig and d_orig["terminal"] in TERMINAL_MAPPA:
+                dove, campo = d_orig, "partenza"
+        if not campo or not dove or dove["terminal"] not in TERMINAL_MAPPA:
             continue
         nome = pulisci_nome(r["nave"])
         if not nome:
             continue
         chiave_n = r["imo"] if r["imo_ok"] else re.sub(r"[^A-Z]", "", nome)
         n = per_nave.setdefault(chiave_n, {"nome": nome, "imo": r["imo"] if r["imo_ok"] else "",
-                                           "tipo": pulisci_tipo(r["tipo"]), "loa": r.get("loa"), "larg": r.get("larg"),
-                                           "accosto": pulisci_accosto(r["accosto"], r["dove"].get("molo")), "dove": r["dove"],
+                                           "tipo": tipo, "loa": loa, "larg": r.get("larg"),
+                                           "accosto": pulisci_accosto(r["accosto"], dove.get("molo")), "dove": dove,
                                            "arrivo": None, "partenza": None})
-        # tra due letture dello stesso nome si tiene la piu' pulita
         if len(re.sub(r"[^A-Z]", "", nome)) > len(re.sub(r"[^A-Z]", "", n["nome"])) and r["imo_ok"]:
             n["nome"] = nome
-        n["loa"] = misura(n["loa"], 25, 420) or misura(r.get("loa"), 25, 420)
+        n["loa"] = n["loa"] or loa
         n["larg"] = misura(n["larg"], 5, 66) or misura(r.get("larg"), 5, 66)
-        n["tipo"] = n["tipo"] or pulisci_tipo(r["tipo"])
-        campo = "arrivo" if r["sezione"] == "ARRIVI" else "partenza"
+        n["tipo"] = n["tipo"] or tipo
+        if campo == "arrivo":
+            n["dove"] = dove
+            n["accosto"] = pulisci_accosto(r["accosto"], dove.get("molo"))
         n[campo] = r["ora"] or None
+        if zona == "VARIAZIONI":
+            n[campo + "_giorno"] = ieri                # cambio al giornale del giorno prima
+        if r["sezione"] == "MOVIMENTI":
+            n["spostamento"] = pulisci_accosto(r["accosto"])
         if r.get("ora_dubbia"):
             n.setdefault("dubbi", []).append(campo)
+            if r.get("nota_ora"):
+                n["nota"] = (n.get("nota", "") + " Orario non leggibile nel giornale: " + r["nota_ora"] + ".").strip()
         if not r["imo_ok"]:
             n.setdefault("dubbi", []).append("imo")
     navi = list(per_nave.values())
@@ -249,8 +313,10 @@ def navi_dal_giornale(righe, data):
         n["dove_giornale"] = dict(n["dove"])
         if "dubbi" in n:
             n["dubbi"] = sorted(set(n["dubbi"]))
-            if "arrivo" in n["dubbi"] or "partenza" in n["dubbi"]:
+            if ("arrivo" in n["dubbi"] or "partenza" in n["dubbi"]) and "non leggibile" not in n.get("nota", ""):
                 n["nota"] = (n.get("nota", "") + " Orario letto male dal giornale: da verificare.").strip()
+    if scartate:
+        log("escluse (mezzi di servizio):", ", ".join(scartate))
     log("navi dei terminal:", len(navi))
     return navi
 
@@ -528,7 +594,8 @@ def aggiorna_presenze(dati, banchine, adesso):
             continue
         s = sta.get(mmsi, {})
         # solo navi vere (passeggeri, carico, cisterne, lunghe almeno 60 m): niente rimorchiatori e barche
-        if not s or not tipo_ais(s.get("tipo")) or (s.get("lung") or 0) < 60:
+        # (le bettoline di rifornimento e i mezzi di servizio sono sotto i 100 m)
+        if not s or not tipo_ais(s.get("tipo")) or (s.get("lung") or 0) < 100:
             continue
         nome = (s.get("nome") or p.get("nome") or "").upper()
         if not nome:
@@ -583,7 +650,7 @@ def unisci_giornale(dati, nuove, data):
             if v is not None:
                 vecchie.pop(chiave_nave(v), None)
         if v is not None:
-            for campo in ("mmsi", "in_porto_dal", "visto_banchina"):
+            for campo in ("mmsi", "visto_banchina") + (() if n.get("arrivo") else ("in_porto_dal",)):
                 if v.get(campo):
                     n.setdefault(campo, v[campo])
             if v.get("loa") and not n.get("loa"):
@@ -593,13 +660,14 @@ def unisci_giornale(dati, nuove, data):
         risultato.append(n)
     for v in vecchie.values():
         if v.get("giorno") and v["giorno"] < data:
-            part = istante(v["giorno"], v.get("partenza"))
+            part = istante(v.get("partenza_giorno") or v["giorno"], v.get("partenza"))
             if part is not None:
                 continue                         # aveva la partenza in un giorno passato: se ne occupa la pulizia
             # arrivata (o gia' in porto) e senza partenza: resta, ora e' "in porto dal ..."
             if v.get("arrivo") or v.get("in_porto_dal"):
                 v["in_porto_dal"] = v.get("in_porto_dal") or v["giorno"]
                 v["arrivo"] = None
+                v.pop("arrivo_giorno", None); v.pop("partenza_giorno", None)
                 v["giorno"] = data
                 v["fonti"] = sorted(set(v.get("fonti", []) + ["memoria"]))
                 risultato.append(v)
@@ -615,7 +683,7 @@ def pulizia(dati, adesso):
     tenute = []
     for n in dati.get("navi", []):
         visto = datetime.fromisoformat(n["visto_banchina"]) if n.get("visto_banchina") else None
-        part = istante(n.get("giorno"), n.get("partenza"))
+        part = istante(n.get("partenza_giorno") or n.get("giorno"), n.get("partenza"))
         a = n.get("ais") or {}
         if n.get("conferma", {}).get("tipo") == "partenza" and n["conferma"].get("quando"):
             pc = datetime.fromisoformat(n["conferma"]["quando"])
@@ -628,6 +696,8 @@ def pulizia(dati, adesso):
         if visto and not a.get("ormeggiata") and a.get("vel", 0) >= 2 and a.get("dist_nm", 0) > 1 and not n.get("arrivo"):
             log("uscita dal porto (AIS):", n["nome"]); continue
         fonti = n.get("fonti", ["giornale"])
+        if "giornale" not in fonti and (n.get("loa") or 0) < 100:
+            log("tolta (mezzo di servizio visto solo dall'AIS):", n["nome"]); continue
         if "giornale" not in fonti or "memoria" in fonti or n.get("giorno", "") < adesso.astimezone(ROMA).date().isoformat():
             # tenuta solo dalla memoria o dall'AIS: serve una conferma recente
             if visto and adesso - visto > timedelta(hours=30):

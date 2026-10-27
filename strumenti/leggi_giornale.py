@@ -152,7 +152,10 @@ def leggi(percorso):
     c = scegli_colonne(colonne)
     nomi = ["H", "OP", "NAVE", "GT", "IMO", "PR", "PP", "LOA", "LARG", "TYPE", "ACCOSTO", "AGENZIA"]
     sezione = None
-    diga = False
+    # zona del giornale: PRINCIPALE (bacino di Sampierdarena e porto storico),
+    # VARIAZIONI (cambi al giornale del giorno prima), AREA MULTEDO, AREA VOLTRI,
+    # MEZZI DIGA (draghe, pontoni e motobarche del cantiere della nuova diga)
+    zona = "PRINCIPALE"
     def colonne_locali(y0, y1):
         striscia = bin_inv[y0:y1]
         loc = []
@@ -162,7 +165,16 @@ def leggi(percorso):
             loc.append(a + int(np.argmax(somma)) if somma.max() > 255 * (y1 - y0) * 0.5 else g)
         return loc
 
-    c_glob = c
+    def riga_titolo(y0, y1):
+        """Le righe dei titoli (PREVISIONI DEL…, AREA MULTEDO, MEZZI DIGA…) sono una
+        cella unica: dentro non ci sono le linee verticali delle colonne."""
+        presenti = 0
+        for g in c[2:11]:
+            fascia = vert[y0 + 4:max(y0 + 5, y1 - 4), max(0, g - 10):g + 11]
+            if fascia.size and fascia.any(axis=1).mean() > 0.5:
+                presenti += 1
+        return presenti <= 2
+
     for y0, y1 in zip(righe, righe[1:]):
         if y1 - y0 < 25:
             continue
@@ -170,19 +182,31 @@ def leggi(percorso):
         M = 18  # margine (in pixel ingranditi) per non prendere la colonna accanto
         cella = lambda i: pulita[y0 + 3:y1 - 2, c[i] + M:c[i + 1] - 6]
         intera = pulita[y0 + 3:y1 - 2, c[0] + 4:c[-1] - 3]
+        if riga_titolo(y0, y1):
+            titolo = re.sub(r"[^A-Z]", "", ocr(intera, "--psm 7").upper())
+            if not titolo:
+                continue
+            simile = lambda parola: difflib.SequenceMatcher(None, parola, titolo).find_longest_match(0, len(parola), 0, len(titolo)).size >= len(parola) - 1
+            if simile("DIGA") or simile("MEZZI"):
+                zona = "MEZZI DIGA"
+            elif simile("MULTEDO"):
+                zona = "AREA MULTEDO"
+            elif simile("VOLTRI"):
+                zona = "AREA VOLTRI"
+            elif simile("VARIAZIONI"):
+                zona = "VARIAZIONI"
+            elif simile("PREVISIONI"):
+                zona = "PRINCIPALE"
+            for nome in ("ARRIVI", "PARTENZE", "MOVIMENTI"):
+                if titolo.startswith(nome[:5]) or (len(titolo) <= len(nome) + 3 and simile(nome)):
+                    sezione = nome
+            continue
         nave = ocr(cella(2), "--psm 7")
         imo = re.sub(r"\D", "", ocr(cella(4), "--psm 7 -c tessedit_char_whitelist=0123456789"))
-        if len(imo) < 6:
-            titolo = ocr(intera, "--psm 7").upper().replace(" ", "")
-            trovata = False
-            for nome in ("ARRIVI", "PARTENZE", "MOVIMENTI", "MEZZIDIGA"):
-                if difflib.SequenceMatcher(None, nome, titolo[:len(nome) + 4]).find_longest_match(0, len(nome), 0, len(titolo[:len(nome) + 4])).size >= len(nome) - 2:
-                    if nome == "MEZZIDIGA":
-                        diga = True
-                    sezione = ("MEZZI DIGA" if nome == "MEZZIDIGA" else nome); trovata = True
-            if trovata or not nave:
-                continue
+        if not nave or (len(imo) < 6 and not re.search(r"[A-Z]{3}", nave.upper())):
+            continue
         riga = {
+            "zona": zona,
             "sezione": sezione,
             "ora": leggi_ora(pulita[y0 + 3:y1 - 2, cl[0] + 8:cl[1] - 6]),
             "op": ocr(pulita[y0 + 3:y1 - 2, cl[1] + 8:cl[2] - 6], "--psm 7"),
@@ -194,8 +218,7 @@ def leggi(percorso):
             "loa": numero(ocr(cella(7), "--psm 7 -c tessedit_char_whitelist=0123456789,.")),
             "larg": numero(ocr(cella(8), "--psm 7 -c tessedit_char_whitelist=0123456789,.")),
         }
-        if sezione and sezione.startswith("MEZZI DIGA "):
-            sezione = sezione[len("MEZZI DIGA "):]
+        # l'operazione scritta nella riga vale piu' del titolo (nel giornale "misto" sono alternate)
         op = re.sub(r"[^A-Z]", "", riga["op"].upper())
         if re.search(r"AR+[RI]|RRIV|ARRI", op):
             sezione = "ARRIVI"
@@ -203,8 +226,6 @@ def leggi(percorso):
             sezione = "PARTENZE"
         elif re.search(r"MOV|OV", op):
             sezione = "MOVIMENTI"
-        if diga and sezione and not sezione.startswith("MEZZI DIGA"):
-            sezione = "MEZZI DIGA " + sezione      # i mezzi diga hanno le loro sezioni: non sono navi da visitare
         riga["sezione"] = sezione
         riga["dove"] = riconosci_accosto(riga["accosto"])
         risultati.append(riga)
