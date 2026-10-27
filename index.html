@@ -55,6 +55,16 @@
     border:2px solid var(--linea);border-radius:14px;background:#fff;color:var(--inchiostro);outline:none}
   #pinInput:focus{border-color:var(--arancio)}
   #pinErr{color:var(--arancio-scuro);font-size:14px;min-height:18px}
+  #btFace{width:min(300px, 100%);padding:15px}
+  .spunta-face{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--grigio);justify-content:center}
+  .spunta-face input{width:20px;height:20px;margin:0;accent-color:var(--arancio)}
+  #pin.con-face #pinForm{opacity:.85}
+  #faceInvito{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:120;
+    background:var(--latte);border:1px solid var(--linea);border-radius:18px;box-shadow:0 8px 30px rgba(42,36,31,.28);
+    padding:14px;display:flex;flex-direction:column;gap:12px;max-width:420px;margin:0 auto}
+  #faceInvito p{margin:0;font-size:15px;font-weight:600}
+  #faceInvito .fi-bottoni{display:flex;gap:8px}
+  #faceInvito .bottone{flex:1;padding:12px}
   .marchio{width:56px;height:56px;border-radius:16px;background:var(--arancio);display:grid;place-items:center}
 
   /* ---------- Testata ---------- */
@@ -324,11 +334,15 @@
     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#FDFDF1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><path d="M12 7.2V21M5 13a7 7 0 0 0 14 0M8.5 10.5h7"/></svg>
   </div>
   <h1>Moli del porto</h1>
-  <p>Inserisci il codice per aprire la mappa.</p>
+  <p id="pinTesto">Inserisci il codice per aprire la mappa.</p>
+  <button id="btFace" class="bottone b-primario" type="button" hidden>
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1 3.6 1 5 0"/></svg>
+    Entra con Face ID</button>
   <form id="pinForm" autocomplete="off">
     <input id="pinInput" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"
            spellcheck="false" enterkeyhint="go" aria-label="Codice">
     <button id="pinBtn" class="bottone b-primario" type="submit">Entra</button>
+    <label class="spunta-face" id="faceScelta" hidden><input type="checkbox" id="faceAttiva" checked> Le prossime volte entra con Face ID</label>
   </form>
   <p id="pinErr" role="alert"></p>
 </div>
@@ -443,15 +457,129 @@
   }
 
   // chiamata dall'app quando scatta il blocco per inattivita'
-  window.PORTA = { chiave: null, dimentica: function(){ ls(CHIAVE_KEY, null); window.PORTA.chiave = null; } };
+  window.PORTA = { chiave: null, dimentica: function(){ ls(CHIAVE_KEY, null); window.PORTA.chiave = null; mostraFace(); } };
+
+  /* ---------- Face ID (passkey) ----------
+     Una passkey del telefono (Face ID / Touch ID) produce un segreto (estensione
+     PRF) che cifra la chiave dei dati. Il codice resta l'unico modo di aprire
+     i dati da zero; la passkey e' solo una scorciatoia su questo telefono. */
+  var CHIAVE_FACE = "porto_face_v1";
+  var btFace = document.getElementById("btFace"), sceltaFace = document.getElementById("faceScelta");
+  var faceAttiva = document.getElementById("faceAttiva");
+  var sale = new TextEncoder().encode("moli-porto-face-v1");
+  function faceSalvata(){ try{ return JSON.parse(ls(CHIAVE_FACE) || "null"); }catch(e){ return null; } }
+  function faceDisponibile(){
+    return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create &&
+              PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable);
+  }
+  function mostraFace(){
+    var f = faceSalvata();
+    btFace.hidden = !f;
+    document.getElementById("pin").classList.toggle("con-face", !!f);
+    document.getElementById("pinTesto").textContent = f ? "Entra con Face ID, oppure con il codice." : "Inserisci il codice per aprire la mappa.";
+    sceltaFace.hidden = true;
+    if(!f && faceDisponibile()){
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(function(ok){ sceltaFace.hidden = !ok; }).catch(function(){});
+    }
+  }
+  function avvisoFace(t){
+    var d = document.getElementById("faceInvito");
+    if(!d) return;
+    d.querySelector("p").textContent = t;
+    d.querySelector("[data-no]").hidden = true;
+    d.querySelector("[data-si]").textContent = "Ok";
+    d.querySelector("[data-si]").onclick = function(){ d.hidden = true; d.querySelector("[data-no]").hidden = false; };
+    d.hidden = false;
+  }
+  function casuale(n){ var u = new Uint8Array(n); crypto.getRandomValues(u); return u; }
+  function segretoPRF(credId){
+    return navigator.credentials.get({ publicKey: {
+      challenge: casuale(32), userVerification: "required", timeout: 60000,
+      allowCredentials: [{ type: "public-key", id: daB64(credId) }],
+      extensions: { prf: { eval: { first: sale } } }
+    }}).then(function(c){
+      var r = c.getClientExtensionResults && c.getClientExtensionResults();
+      var s = r && r.prf && r.prf.results && r.prf.results.first;
+      if(!s) throw new Error("prf");
+      return crypto.subtle.importKey("raw", s, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+    });
+  }
+  /* dopo il codice giusto: crea la passkey e ci cifra la chiave dei dati */
+  function attivaFace(chiave){
+    var credId;
+    return navigator.credentials.create({ publicKey: {
+      rp: { name: "Moli del porto" },
+      user: { id: casuale(16), name: "moli-porto", displayName: "Moli del porto" },
+      challenge: casuale(32),
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", residentKey: "preferred", userVerification: "required" },
+      timeout: 60000,
+      extensions: { prf: { eval: { first: sale } } }
+    }}).then(function(c){
+      credId = aB64(c.rawId);
+      var r = c.getClientExtensionResults && c.getClientExtensionResults();
+      if(r && r.prf && r.prf.enabled === false) throw new Error("prf");
+      var s = r && r.prf && r.prf.results && r.prf.results.first;
+      if(s) return crypto.subtle.importKey("raw", s, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+      // il segreto non arriva alla creazione: serve una conferma con Face ID (secondo tocco)
+      return chiediTocco("Ultimo passaggio: conferma con Face ID.", "Conferma con Face ID").then(function(){ return segretoPRF(credId); });
+    }).then(function(k){
+      return crypto.subtle.exportKey("raw", chiave).then(function(raw){
+        var iv = casuale(12);
+        return crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, k, raw).then(function(ct){
+          ls(CHIAVE_FACE, JSON.stringify({ id: credId, iv: aB64(iv), ct: aB64(ct) }));
+        });
+      });
+    });
+  }
+  /* riquadro con un pulsante: Face ID va avviato da un tocco */
+  function chiediTocco(testo, etichetta){
+    return new Promise(function(ok, no){
+      var d = document.getElementById("faceInvito");
+      if(!d){
+        d = document.createElement("div"); d.id = "faceInvito";
+        d.innerHTML = '<p></p><div class="fi-bottoni"><button type="button" class="bottone b-secondario" data-no>Non ora</button>' +
+                      '<button type="button" class="bottone b-primario" data-si></button></div>';
+        document.body.appendChild(d);
+      }
+      d.querySelector("p").textContent = testo;
+      d.querySelector("[data-si]").textContent = etichetta;
+      d.hidden = false;
+      d.querySelector("[data-si]").onclick = function(){ d.hidden = true; ok(); };
+      d.querySelector("[data-no]").onclick = function(){ d.hidden = true; no(new Error("annullato")); };
+    });
+  }
+  btFace.addEventListener("click", function(){
+    var f = faceSalvata(); if(!f) return;
+    err.textContent = ""; btFace.disabled = true;
+    segretoPRF(f.id).then(function(k){
+      return crypto.subtle.decrypt({ name: "AES-GCM", iv: daB64(f.iv) }, k, daB64(f.ct));
+    }).then(function(raw){
+      return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, true, ["decrypt"]);
+    }).then(apriCon).then(function(){ btFace.disabled = false; })
+    .catch(function(e){
+      btFace.disabled = false;
+      if(e && e.name === "NotAllowedError"){ err.textContent = "Face ID annullato. Riprova o usa il codice."; return; }
+      // passkey non piu' valida o dati cambiati: si torna al codice
+      ls(CHIAVE_FACE, null); mostraFace();
+      err.textContent = "Face ID non disponibile: inserisci il codice (poi puoi riattivarlo).";
+    });
+  });
 
   form.addEventListener("submit", function(e){
     e.preventDefault();
     var codice = inp.value;
     if(!codice) return;
     err.textContent = ""; btn.disabled = true; btn.textContent = "Verifica…";
-    chiaveDaCodice(codice).then(apriCon).then(function(){
+    var chiaveOk;
+    chiaveDaCodice(codice).then(function(k){ chiaveOk = k; return apriCon(k); }).then(function(){
       inp.value = ""; btn.disabled = false; btn.textContent = "Entra";
+      if(!sceltaFace.hidden && faceAttiva.checked && !faceSalvata()){
+        chiediTocco("Vuoi entrare con Face ID le prossime volte, senza scrivere il codice?", "Attiva Face ID")
+          .then(function(){ return attivaFace(chiaveOk); })
+          .then(function(){ mostraFace(); avvisoFace("Face ID attivo su questo telefono."); })
+          .catch(function(e){ if(e && e.message !== "annullato") avvisoFace("Face ID non disponibile su questo telefono: resta il codice."); });
+      }
     }).catch(function(){
       btn.disabled = false; btn.textContent = "Entra";
       err.textContent = "Codice non corretto, riprova."; inp.value = ""; try{ inp.focus(); }catch(e2){}
@@ -463,6 +591,8 @@
     btn.disabled = true;
     return;
   }
+
+  mostraFace();
 
   // usata di recente su questo telefono: si riapre senza codice
   var min = Number(ls(CHIAVE_MIN)) || 20;
@@ -1470,7 +1600,7 @@ window.avviaApp = function(){
     if(!r) return null;
     return [r[0] + off, r[1] + off, r[2], off / 1440];
   }
-  function oraN(n, campo){ return orario(n[campo], n.giorno || (NAVI && NAVI.data)); }
+  function oraN(n, campo){ return orario(n[campo], n[campo + "_giorno"] || n.giorno || (NAVI && NAVI.data)); }
   function prefissoGiorno(r){
     var g = r[3] || 0;
     if(g === 0) return "";
@@ -1850,6 +1980,7 @@ window.avviaApp = function(){
       '</div>' +
       (n.ais ? riga("AIS", esc(testoAIS(n.ais))) : "") +
       riga("Accosto", esc(n.accosto)) +
+      (n.spostamento ? riga("Spostamento", esc(n.spostamento)) : "") +
       (n.conferma ? riga("Sito porto", esc(testoConferma(n.conferma))) : "") +
       riga("Arrivo", a ? quando(a).replace(/^alle /, "") : (n.in_porto_dal ? "in porto dal " + dataLunga(n.in_porto_dal) : "già in porto")) +
       riga("Partenza", p ? quando(p).replace(/^alle /, "") : "non prevista oggi") +
