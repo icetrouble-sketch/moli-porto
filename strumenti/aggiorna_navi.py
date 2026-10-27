@@ -1063,6 +1063,9 @@ def main():
     lim = (adesso.astimezone(ROMA).date() - timedelta(days=7)).isoformat()
     dati["taratura_giorni"] = {k: 1 for k in dati.get("taratura_giorni", {}) if k.rsplit(">", 1)[-1] >= lim}
     pulizia(dati, adesso)
+    for n in sorted(dati.get("navi", []), key=lambda x: x.get("nome") or ""):
+        log("in elenco:", n.get("nome"), "|", n.get("tipo") or "?", "|", (n.get("dove") or {}).get("terminal"),
+            "|", "ormeggiata" if (n.get("ais") or {}).get("ormeggiata") else ("solo AIS" if n.get("fonti") == ["ais"] else "giornale"))
     dati["aggiornato"] = datetime.now(timezone.utc).isoformat()
     dati["esempio"] = False
     chiudi(k, dati, uscita)
