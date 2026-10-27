@@ -342,10 +342,11 @@ def motivo_esclusione(n, dati):
         return "ro-ro con passeggeri (dal giornale)"
     if ESCLUDI_CISTERNE and e_cisterna(tipo):
         return "cisterna (da confermare)"
-    if tipo in ("RO/RO", ""):
-        t = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or ""))
-        if 60 <= t <= 69:
-            return "ro-ro con passeggeri (tipo AIS: passeggeri)"
+    t = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or ""))
+    if ESCLUDI_CISTERNE and 80 <= t <= 89 and "giornale" in (n.get("fonti") or ["giornale"]):
+        return "cisterna (tipo AIS, il giornale lo scrive " + (tipo or "illeggibile") + ")"
+    if tipo in ("RO/RO", "") and 60 <= t <= 69:
+        return "ro-ro con passeggeri (tipo AIS: passeggeri)"
     return None
 
 
@@ -405,11 +406,19 @@ def navi_dal_giornale(righe, data):
     per_nave = {}
     scartate = []
     escluse = []
+    zone_n = {}
+    for r in righe:
+        zone_n.setdefault(r.get("zona") or "PRINCIPALE", []).append(pulisci_nome(r["nave"]) or "?")
+    log("zone del giornale:", " ; ".join(f"{z}: {len(v)} righe (es. {', '.join(v[:3])})" for z, v in zone_n.items()))
     for r in righe:
         zona = r.get("zona") or "PRINCIPALE"
+        if "BULK" in lettere(r["tipo"]):
+            log("bulk nel giornale:", pulisci_nome(r["nave"]), "| zona", zona, "| accosto", r["accosto"])
         if zona not in ZONE_BUONE:
             continue                                   # Multedo, Voltri, mezzi della diga
         tipo = pulisci_tipo(r["tipo"])
+        if tipo and tipo not in TIPI and "".join(c for c in tipo if c.isalpha()):
+            log("tipo non riconosciuto:", pulisci_nome(r["nave"]), repr(r["tipo"]), "| zona", zona)
         if any(t in re.sub(r"[^A-Z.]", "", (r["tipo"] or "").upper()) for t in TIPI_ESCLUSI):
             if r.get("dove"):
                 scartate.append(pulisci_nome(r["nave"]) + " (" + (r["tipo"] or "").strip() + ")")
@@ -1064,7 +1073,8 @@ def main():
     dati["taratura_giorni"] = {k: 1 for k in dati.get("taratura_giorni", {}) if k.rsplit(">", 1)[-1] >= lim}
     pulizia(dati, adesso)
     for n in sorted(dati.get("navi", []), key=lambda x: x.get("nome") or ""):
-        log("in elenco:", n.get("nome"), "|", n.get("tipo") or "?", "|", (n.get("dove") or {}).get("terminal"),
+        log("in elenco:", n.get("nome"), "|", n.get("tipo") or "?", "| AIS tipo", (dati.get("statici") or {}).get(n.get("mmsi") or "", {}).get("tipo", "-"),
+            "|", (n.get("dove") or {}).get("terminal"),
             "|", "ormeggiata" if (n.get("ais") or {}).get("ormeggiata") else ("solo AIS" if n.get("fonti") == ["ais"] else "giornale"))
     dati["aggiornato"] = datetime.now(timezone.utc).isoformat()
     dati["esempio"] = False

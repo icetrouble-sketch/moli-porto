@@ -57,6 +57,13 @@ class Esclusioni(unittest.TestCase):
         finally:
             A.ESCLUDI_CISTERNE = True
 
+    def test_cisterna_col_tipo_illeggibile_si_riconosce_dall_ais(self):
+        d = {"navi": [{"nome": "GOYNUK", "imo": "", "tipo": "MM.", "mmsi": "271000001", "fonti": ["giornale"]},
+                      {"nome": "CONTAINER", "imo": "", "tipo": "CONT.", "mmsi": "271000002", "fonti": ["giornale"]}],
+             "statici": {"271000001": {"tipo": 82}, "271000002": {"tipo": 70}}}
+        A.escludi_non_visitabili(d, quando("2026-10-27", "09:00"))
+        self.assertEqual([n["nome"] for n in d["navi"]], ["CONTAINER"])
+
     def test_cisterna_vista_solo_dall_ais_non_entra(self):
         banchine = {"MOLO": {"terminal": "rinfuse", "ponente": [[44.4000, 8.9000], [44.4010, 8.9000]],
                              "acqua": {"ponente": [0, -1]}}}
