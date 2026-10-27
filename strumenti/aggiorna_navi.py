@@ -287,6 +287,9 @@ def da_a(accosto):
 # - le navi chemical (chimichiere);
 # - le RO/RO che portano passeggeri (ro-pax, traghetti).
 NOTA_RORO = "Ro-ro: né il giornale né l'AIS dicono ancora se porta passeggeri, da controllare."
+# Cisterne (TANK) escluse per ora, in attesa di conferma di Mele: per rimetterle in elenco
+# basta portare questo interruttore a False.
+ESCLUDI_CISTERNE = True
 
 
 def lettere(t):
@@ -296,6 +299,11 @@ def lettere(t):
 def e_chimichiera(tipo):
     """Tipo del giornale (letto male o no): CHIM., CHEM., CHEMICAL, OIL/CHEM..."""
     return tipo == "CHIM." or bool(re.search(r"CHEM|CHIM", lettere(tipo)))
+
+
+def e_cisterna(tipo):
+    """TANK, TANKER... (le chemical sono gia' escluse a parte)."""
+    return tipo == "TANK" or "TANK" in lettere(tipo)
 
 
 def ro_ro_pax_dal_testo(tipo):
@@ -318,6 +326,8 @@ def motivo_esclusione(n, dati):
         return "nave chemical"
     if ro_ro_pax_dal_testo(tipo):
         return "ro-ro con passeggeri (dal giornale)"
+    if ESCLUDI_CISTERNE and e_cisterna(tipo):
+        return "cisterna (da confermare)"
     if tipo in ("RO/RO", ""):
         t = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or ""))
         if 60 <= t <= 69:
@@ -391,7 +401,8 @@ def navi_dal_giornale(righe, data):
                 scartate.append(pulisci_nome(r["nave"]) + " (" + (r["tipo"] or "").strip() + ")")
             continue
         motivo = ("nave chemical" if e_chimichiera(r["tipo"]) or e_chimichiera(tipo)
-                  else "ro-ro con passeggeri (dal giornale)" if ro_ro_pax_dal_testo(r["tipo"]) else None)
+                  else "ro-ro con passeggeri (dal giornale)" if ro_ro_pax_dal_testo(r["tipo"])
+                  else "cisterna (da confermare)" if ESCLUDI_CISTERNE and (e_cisterna(tipo) or e_cisterna(r["tipo"])) else None)
         if motivo:
             nome_e = pulisci_nome(r["nave"])
             if nome_e:
@@ -738,6 +749,8 @@ def aggiorna_presenze(dati, banchine, adesso):
         # (le bettoline di rifornimento e i mezzi di servizio sono sotto i 100 m)
         if not s or not tipo_ais(s.get("tipo")) or (s.get("lung") or 0) < 100:
             continue
+        if ESCLUDI_CISTERNE and tipo_ais(s.get("tipo")) == "TANK":
+            continue                                  # cisterne escluse in attesa di conferma
         nome = (s.get("nome") or p.get("nome") or "").upper()
         if not nome:
             continue

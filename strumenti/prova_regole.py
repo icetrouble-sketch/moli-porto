@@ -42,9 +42,30 @@ class Esclusioni(unittest.TestCase):
             self.assertEqual(navi, {}, tipo)
             self.assertEqual(escluse[0]["motivo"], "nave chemical", tipo)
 
-    def test_cisterna_normale_resta(self):
-        navi, _ = self.navi(riga("BETA", "9074729", "TANK", "ARRIVI", "10.00"))
-        self.assertIn("BETA", navi)
+    def test_cisterne_escluse_per_ora(self):
+        for tipo in ("TANK", "TANKER"):
+            navi, escluse = self.navi(riga("BETA", "9074729", tipo, "ARRIVI", "10.00"))
+            self.assertEqual(navi, {}, tipo)
+            self.assertEqual(escluse[0]["motivo"], "cisterna (da confermare)")
+        d = {"navi": [{"nome": "OMEGA", "imo": "", "tipo": "TANK"}], "statici": {}}
+        A.escludi_non_visitabili(d, quando("2026-10-27", "09:00"))
+        self.assertEqual(d["navi"], [])                              # gia' in elenco: tolta
+        A.ESCLUDI_CISTERNE = False                                   # con l'interruttore spento tornano
+        try:
+            navi, _ = self.navi(riga("BETA", "9074729", "TANK", "ARRIVI", "10.00"))
+            self.assertIn("BETA", navi)
+        finally:
+            A.ESCLUDI_CISTERNE = True
+
+    def test_cisterna_vista_solo_dall_ais_non_entra(self):
+        banchine = {"MOLO": {"terminal": "rinfuse", "ponente": [[44.4000, 8.9000], [44.4010, 8.9000]],
+                             "acqua": {"ponente": [0, -1]}}}
+        adesso = quando("2026-10-27", "10:00")
+        d = {"navi": [], "escluse": [], "statici": {"247000009": {"imo": "9074729", "nome": "SIGMA", "tipo": 82, "lung": 150}},
+             "registro": {"247000009": {"lat": 44.4005, "lon": 8.8999, "sog": 0, "nome": "SIGMA", "stato": 5,
+                                        "quando": adesso.isoformat()}}}
+        A.aggiorna_presenze(d, banchine, adesso)
+        self.assertEqual(d["navi"], [])
 
     def test_ro_ro_con_passeggeri_dal_testo(self):
         for tipo in ("RO/PAX", "RO-PAX", "RO/RO PAX", "RO/RO PASS."):
@@ -82,7 +103,7 @@ class Esclusioni(unittest.TestCase):
         banchine = {"MOLO": {"terminal": "rinfuse", "ponente": [[44.4000, 8.9000], [44.4010, 8.9000]],
                              "acqua": {"ponente": [0, -1]}}}
         adesso = quando("2026-10-27", "10:00")
-        d = {"navi": [], "escluse": [], "statici": {"247000003": {"imo": "9074729", "nome": "THETA", "tipo": 80, "lung": 150}},
+        d = {"navi": [], "escluse": [], "statici": {"247000003": {"imo": "9074729", "nome": "THETA", "tipo": 70, "lung": 150}},
              "registro": {"247000003": {"lat": 44.4005, "lon": 8.8999, "sog": 0, "nome": "THETA", "stato": 5,
                                         "quando": adesso.isoformat()}}}
         A.aggiorna_presenze(d, banchine, adesso)
