@@ -25,8 +25,8 @@ TERMINAL_MAPPA = {"imt", "sangiorgio", "gmt", "spinelli", "rinfuse", "bettolo", 
 IMBOCCATURA = (44.3985, 8.8960)
 # area dei moli: dentro e ferma = in banchina
 MOLI_BOX = (44.3960, 44.4125, 8.8720, 8.9200)
-# zona in cui ascoltare l'AIS: Mar Ligure
-AIS_BOX = [[43.30, 7.50], [44.60, 10.30]]
+# zona in cui ascoltare l'AIS: Mar Ligure e dintorni
+AIS_BOX = [[42.00, 6.00], [44.60, 11.00]]   # da Marsiglia all'Elba: le navi in arrivo si vedono ore prima
 
 
 def log(*a):
@@ -78,7 +78,7 @@ def data_giornale_sul_sito(sess):
     if not m:
         raise RuntimeError("data del giornale non trovata nella pagina")
     campi = {k: H.unescape(v) for k, v in campi_nascosti(r.text).items()}
-    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}", campi
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}", campi, r.text
 
 
 def scarica_giornale(sess, campi):
@@ -255,6 +255,10 @@ def navi_dal_giornale(righe, data):
 
 
 # ---------------------------------------------------------------- AIS
+KX = 111320 * math.cos(math.radians(44.405))   # metri per grado di longitudine qui
+KY = 111320.0
+
+
 def distanza_nm(a, b):
     la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
     h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
@@ -265,6 +269,22 @@ def norm_nome(n):
     return re.sub(r"[^A-Z0-9]", "", (n or "").upper())
 
 
+def ora_utc(s):
+    """'2026-10-27 06:10:23.12 +0000 UTC' -> datetime UTC"""
+    try:
+        return datetime.strptime(str(s)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def tipo_ais(t):
+    t = int(t or 0)
+    if 60 <= t <= 69: return "PASS."
+    if 70 <= t <= 79: return "CARGO"
+    if 80 <= t <= 89: return "TANK"
+    return ""
+
+
 async def ascolta_ais(chiave_ais, secondi):
     import websockets
     pos, statici = {}, {}
@@ -272,7 +292,7 @@ async def ascolta_ais(chiave_ais, secondi):
            "FilterMessageTypes": ["PositionReport", "ShipStaticData"]}
     fine = time.time() + secondi
     try:
-        async with websockets.connect("wss://stream.aisstream.io/v0/stream", open_timeout=30) as ws:
+        async with websockets.connect("wss://stream.aisstream.io/v0/stream", open_timeout=30, max_size=2 ** 22) as ws:
             await ws.send(json.dumps(sub))
             while time.time() < fine:
                 try:
@@ -285,54 +305,308 @@ async def ascolta_ais(chiave_ais, secondi):
                 md = m.get("MetaData", {}); mmsi = str(md.get("MMSI", ""))
                 if m.get("MessageType") == "PositionReport":
                     p = m["Message"]["PositionReport"]
-                    pos[mmsi] = {"lat": p["Latitude"], "lon": p["Longitude"], "sog": p.get("Sog"), "cog": p.get("Cog"),
+                    pos[mmsi] = {"lat": p["Latitude"], "lon": p["Longitude"], "sog": p.get("Sog") or 0,
+                                 "cog": p.get("Cog"), "rotta": p.get("TrueHeading"),
                                  "stato": p.get("NavigationalStatus"), "nome": (md.get("ShipName") or "").strip(),
-                                 "quando": md.get("time_utc")}
+                                 "quando": ora_utc(md.get("time_utc")).isoformat()}
                 elif m.get("MessageType") == "ShipStaticData":
                     s = m["Message"]["ShipStaticData"]
+                    dim = s.get("Dimension") or {}
                     statici[mmsi] = {"imo": str(s.get("ImoNumber") or ""), "nome": (s.get("Name") or "").strip(),
-                                     "dest": (s.get("Destination") or "").strip(), "eta": s.get("Eta")}
+                                     "dest": (s.get("Destination") or "").strip(), "tipo": s.get("Type"),
+                                     "lung": (dim.get("A") or 0) + (dim.get("B") or 0),
+                                     "larg": (dim.get("C") or 0) + (dim.get("D") or 0)}
     except Exception as e:
         log("AIS non raggiungibile:", type(e).__name__, e)
     log("AIS: posizioni", len(pos), "dati nave", len(statici))
     return pos, statici
 
 
-def aggiungi_ais(dati, pos, statici, adesso):
-    cache = dati.setdefault("mmsi", {})                 # imo/nome -> mmsi, resta tra un giro e l'altro
+def verso_genova(p):
+    """La rotta della nave punta (entro 50 gradi) verso l'imboccatura?"""
+    rotta = p.get("cog")
+    if rotta is None or rotta >= 360:
+        return True
+    dy = (IMBOCCATURA[0] - p["lat"]) * KY
+    dx = (IMBOCCATURA[1] - p["lon"]) * KX
+    rilev = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+    diff = abs((rotta - rilev + 180) % 360 - 180)
+    return diff <= 50
+
+
+def leggi_banchine(k):
+    """Le banchine dei ponti stanno nei dati cifrati della mappa (window.BANCHINE)."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    s = open(os.path.join(BASE, "dati.enc.js"), encoding="utf-8").read()
+    D = json.loads(s[s.index("{"):s.rindex("}") + 1])
+    testo = AESGCM(k).decrypt(base64.b64decode(D["iv"]), base64.b64decode(D["ct"]), None).decode("utf-8")
+    m = re.search(r"window\.BANCHINE\s*=\s*(\{.*?\});\s*$", testo, re.S | re.M)
+    return json.loads(m.group(1)) if m else {}
+
+
+def alla_banchina(lat, lon, banchine):
+    """Se il punto e' a ridosso di una banchina dei nostri moli, dice quale:
+    (molo, lato, terminal, metri dalla radice lungo la banchina)."""
+    meglio = None
+    for molo, b in banchine.items():
+        for lato in ("ponente", "levante", "testata"):
+            l = b.get(lato)
+            if not l:
+                continue
+            ax, ay = l[0][1] * KX, l[0][0] * KY
+            bx, by = l[1][1] * KX, l[1][0] * KY
+            px, py = lon * KX, lat * KY
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t = max(-0.1, min(1.1, ((px - ax) * dx + (py - ay) * dy) / L2))
+            qx, qy = ax + t * dx, ay + t * dy
+            d = math.hypot(px - qx, py - qy)
+            ac = (b.get("acqua") or {}).get(lato) or [0, 0]
+            verso = (px - qx) * ac[1] + (py - qy) * ac[0]        # >0: lato acqua
+            if d < 75 and verso > -15 and (meglio is None or d < meglio[0]):
+                meglio = (d, molo, lato, b["terminal"], round(t * math.sqrt(L2)))
+    return None if meglio is None else {"molo": meglio[1], "lato": meglio[2], "terminal": meglio[3], "s_m": meglio[4]}
+
+
+def chiave_nave(n):
+    return n["imo"] if re.fullmatch(r"\d{7}", n.get("imo") or "") else "N:" + norm_nome(n.get("nome"))
+
+
+def simili(a, b):
+    a, b = norm_nome(a), norm_nome(b)
+    return bool(a) and bool(b) and (a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.86)
+
+
+def aggiorna_registro(dati, pos, statici, adesso):
+    """Tiene in memoria tra un giro e l'altro le ultime posizioni e i dati delle navi."""
+    reg = dati.setdefault("registro", {}); sta = dati.setdefault("statici", {})
     for mmsi, s in statici.items():
-        if s["imo"] and s["imo"] != "0":
-            cache[s["imo"]] = mmsi
-        if s["nome"]:
-            cache["N:" + norm_nome(s["nome"])] = mmsi
+        sta[mmsi] = {**sta.get(mmsi, {}), **{k: v for k, v in s.items() if v}}
     for mmsi, p in pos.items():
-        if p["nome"]:
-            cache.setdefault("N:" + norm_nome(p["nome"]), mmsi)
+        reg[mmsi] = p
+    limite = adesso - timedelta(days=3)
+    for mmsi in [m for m, p in reg.items() if datetime.fromisoformat(p["quando"]) < limite]:
+        reg.pop(mmsi, None)
+
+
+def trova_mmsi(n, dati):
+    if n.get("mmsi"):
+        return n["mmsi"]
+    sta, reg = dati.get("statici", {}), dati.get("registro", {})
+    for mmsi, s in sta.items():
+        if n.get("imo") and s.get("imo") == n["imo"]:
+            return mmsi
+    for mmsi, s in sta.items():
+        if simili(s.get("nome"), n["nome"]):
+            return mmsi
+    for mmsi, p in reg.items():
+        if simili(p.get("nome"), n["nome"]):
+            return mmsi
+    return None
+
+
+def aggiorna_presenze(dati, banchine, adesso):
+    """Mette la posizione AIS sulle navi dell'elenco e aggiunge quelle che l'AIS
+    vede ferme alle nostre banchine anche se il giornale non le nomina."""
+    reg, sta = dati.get("registro", {}), dati.get("statici", {})
+    oggi = adesso.astimezone(ROMA).date().isoformat()
+    usati = set()
     for n in dati["navi"]:
-        mmsi = cache.get(n.get("imo") or "-") or cache.get("N:" + norm_nome(n["nome"]))
+        n.pop("ais", None)
+        mmsi = trova_mmsi(n, dati)
         if not mmsi:
             continue
-        n["mmsi"] = mmsi
-        st = statici.get(mmsi)
-        if st and st["nome"] and len(st["nome"]) >= 3:
-            n["nome"] = st["nome"].upper()                    # nome ufficiale dall'AIS
-        p = pos.get(mmsi)
+        n["mmsi"] = mmsi; usati.add(mmsi)
+        s = sta.get(mmsi, {})
+        if s.get("nome") and len(s["nome"]) >= 3:
+            n["nome"] = s["nome"].upper()                     # nome ufficiale dall'AIS
+        if s.get("imo") and re.fullmatch(r"\d{7}", s["imo"]):
+            n["imo"] = s["imo"]
+        if not n.get("loa") and s.get("lung"):
+            n["loa"], n["larg"] = s["lung"], s.get("larg") or None
+        p = reg.get(mmsi)
         if not p:
             continue
+        quando = datetime.fromisoformat(p["quando"])
+        if adesso - quando > timedelta(hours=3):
+            continue                                          # posizione vecchia: non si usa
         d = distanza_nm((p["lat"], p["lon"]), IMBOCCATURA)
-        dentro = MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]
-        sog = p["sog"] or 0
-        a = {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(sog, 1),
-             "dist_nm": round(d, 1), "quando": adesso.astimezone(ROMA).strftime("%H.%M")}
-        if dentro and sog < 0.7:
-            a["ormeggiata"] = True
-        elif p["stato"] == 1 or (d < 8 and sog < 0.7):
-            a["ancora"] = True                                # ferma in rada
-        elif sog >= 2 and d < 300:
-            arrivo = adesso + timedelta(hours=d / sog)
-            if arrivo.astimezone(ROMA).date() == adesso.astimezone(ROMA).date():
+        a = {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
+             "dist_nm": round(d, 1), "quando": quando.astimezone(ROMA).strftime("%H.%M")}
+        dove = alla_banchina(p["lat"], p["lon"], banchine) if p["sog"] < 0.7 else None
+        if dove:
+            a["ormeggiata"] = True; a["s_m"] = dove["s_m"]
+            n["dove"] = {**n.get("dove", {}), "terminal": dove["terminal"], "molo": dove["molo"],
+                         "lato": dove["lato"] if dove["lato"] != "testata" else None,
+                         "punto": "testata" if dove["lato"] == "testata" else n.get("dove", {}).get("punto"),
+                         "in_rada": False}
+            n["visto_banchina"] = quando.isoformat()
+            n.setdefault("in_porto_dal", oggi)
+        elif p["stato"] == 1 or (d < 8 and p["sog"] < 0.7):
+            a["ancora"] = True
+        elif p["sog"] >= 2:
+            if MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]:
+                a["manovra"] = True
+            elif verso_genova(p) and d < 900:
+                # in rotta verso Genova: ora stimata d'arrivo (+15% per gli ultimi rallentamenti)
+                arrivo = quando + timedelta(hours=d / p["sog"] * 1.15)
+                a["eta_iso"] = arrivo.isoformat()
                 a["eta"] = arrivo.astimezone(ROMA).strftime("%H.%M")
+            elif d > 60:
+                a["lontana"] = True
+        elif d > 60:
+            a["lontana"] = True
         n["ais"] = a
+    # navi ferme alle nostre banchine che non sono nell'elenco
+    for mmsi, p in reg.items():
+        if mmsi in usati or p["sog"] >= 0.7:
+            continue
+        quando = datetime.fromisoformat(p["quando"])
+        if adesso - quando > timedelta(hours=6):
+            continue
+        dove = alla_banchina(p["lat"], p["lon"], banchine)
+        if not dove:
+            continue
+        s = sta.get(mmsi, {})
+        # solo navi vere (passeggeri, carico, cisterne, lunghe almeno 60 m): niente rimorchiatori e barche
+        if not s or not tipo_ais(s.get("tipo")) or (s.get("lung") or 0) < 60:
+            continue
+        nome = (s.get("nome") or p.get("nome") or "").upper()
+        if not nome:
+            continue
+        log("in banchina secondo l'AIS:", nome, dove["molo"], dove["lato"])
+        dati["navi"].append({
+            "nome": nome, "imo": s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else "",
+            "mmsi": mmsi, "tipo": tipo_ais(s.get("tipo")), "loa": s.get("lung") or None, "larg": s.get("larg") or None,
+            "accosto": dove["molo"] + " " + ("TESTATA" if dove["lato"] == "testata" else dove["lato"][:3].upper() + "."),
+            "dove": {"terminal": dove["terminal"], "molo": dove["molo"],
+                     "lato": None if dove["lato"] == "testata" else dove["lato"],
+                     "punto": "testata" if dove["lato"] == "testata" else None, "in_rada": False},
+            "arrivo": None, "partenza": None, "giorno": oggi, "in_porto_dal": oggi,
+            "fonti": ["ais"], "visto_banchina": quando.isoformat(),
+            "ais": {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
+                    "dist_nm": round(distanza_nm((p["lat"], p["lon"]), IMBOCCATURA), 1),
+                    "quando": quando.astimezone(ROMA).strftime("%H.%M"), "ormeggiata": True, "s_m": dove["s_m"]},
+        })
+
+
+# ---------------------------------------------------------------- memoria tra i giorni
+def minuti_ora(o):
+    """orario del giornale -> minuti (per le partenze vaghe si prende la fine)"""
+    o = (o or "").upper()
+    m = re.fullmatch(r"(\d{2})\.(\d{2})", o)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+    if "ALBA" in o: return 450
+    if re.search(r"A\.?M", o): return 720
+    if re.search(r"P\.?M", o): return 1439
+    return None
+
+
+def istante(giorno, o):
+    v = minuti_ora(o)
+    if v is None or not giorno:
+        return None
+    return datetime.fromisoformat(giorno).replace(tzinfo=ROMA) + timedelta(minutes=v)
+
+
+def unisci_giornale(dati, nuove, data):
+    """Il giornale nuovo aggiorna l'elenco. Le navi di prima che non hanno
+    ancora una partenza passata restano: sono in porto dai giorni scorsi."""
+    vecchie = {chiave_nave(n): n for n in dati.get("navi", [])}
+    risultato = []
+    for n in nuove:
+        n["giorno"] = data
+        n["fonti"] = ["giornale"]
+        v = vecchie.pop(chiave_nave(n), None)
+        if v is None:
+            v = next((x for k, x in list(vecchie.items()) if simili(x["nome"], n["nome"])), None)
+            if v is not None:
+                vecchie.pop(chiave_nave(v), None)
+        if v is not None:
+            for campo in ("mmsi", "in_porto_dal", "visto_banchina"):
+                if v.get(campo):
+                    n.setdefault(campo, v[campo])
+            if v.get("loa") and not n.get("loa"):
+                n["loa"] = v["loa"]
+            if not n.get("arrivo") and (v.get("in_porto_dal") or v.get("arrivo")):
+                n.setdefault("in_porto_dal", v.get("in_porto_dal") or v.get("giorno"))
+        risultato.append(n)
+    for v in vecchie.values():
+        if v.get("giorno") and v["giorno"] < data:
+            part = istante(v["giorno"], v.get("partenza"))
+            if part is not None:
+                continue                         # aveva la partenza in un giorno passato: se ne occupa la pulizia
+            # arrivata (o gia' in porto) e senza partenza: resta, ora e' "in porto dal ..."
+            if v.get("arrivo") or v.get("in_porto_dal"):
+                v["in_porto_dal"] = v.get("in_porto_dal") or v["giorno"]
+                v["arrivo"] = None
+                v["giorno"] = data
+                v["fonti"] = sorted(set(v.get("fonti", []) + ["memoria"]))
+                risultato.append(v)
+        else:
+            risultato.append(v)
+    dati["navi"] = risultato
+
+
+def pulizia(dati, adesso):
+    """Toglie le navi partite: partenza passata (salvo che l'AIS la veda ancora
+    ferma in banchina dopo l'orario), AIS che la vede uscire, o nessuna conferma
+    da troppo tempo."""
+    tenute = []
+    for n in dati.get("navi", []):
+        visto = datetime.fromisoformat(n["visto_banchina"]) if n.get("visto_banchina") else None
+        part = istante(n.get("giorno"), n.get("partenza"))
+        a = n.get("ais") or {}
+        if n.get("conferma", {}).get("tipo") == "partenza" and n["conferma"].get("quando"):
+            pc = datetime.fromisoformat(n["conferma"]["quando"])
+            part = pc if part is None or pc > part else part
+        if part is not None and adesso > part + timedelta(minutes=90):
+            if visto and visto > part + timedelta(minutes=30) and a.get("ormeggiata"):
+                n["ritardo"] = True                       # doveva partire, ma e' ancora li'
+            else:
+                log("partita:", n["nome"]); continue
+        if visto and not a.get("ormeggiata") and a.get("vel", 0) >= 2 and a.get("dist_nm", 0) > 1 and not n.get("arrivo"):
+            log("uscita dal porto (AIS):", n["nome"]); continue
+        fonti = n.get("fonti", ["giornale"])
+        if "giornale" not in fonti or "memoria" in fonti or n.get("giorno", "") < adesso.astimezone(ROMA).date().isoformat():
+            # tenuta solo dalla memoria o dall'AIS: serve una conferma recente
+            if visto and adesso - visto > timedelta(hours=30):
+                log("non piu' vista in banchina:", n["nome"]); continue
+            dal = n.get("in_porto_dal")
+            if not visto and dal and (adesso.astimezone(ROMA).date() - datetime.fromisoformat(dal).date()).days > 3:
+                log("in memoria da troppi giorni senza conferme:", n["nome"]); continue
+            n["da_confermare"] = not visto
+        tenute.append(n)
+    dati["navi"] = tenute
+
+
+# ---------------------------------------------------------------- tabella del sito
+def leggi_tabelle_sito(html_pagina):
+    """Prossimi arrivi e partenze nella home del sito (con la conferma VHF/CONF)."""
+    import html as H
+    out = []
+    for tipo, ident in (("arrivo", "grdArrivi_ctl00"), ("partenza", "grdPartenze_ctl00")):
+        m = re.search(r'<table[^>]*id="[^"]*' + ident + r'".*?</table>', html_pagina, re.S)
+        if not m:
+            continue
+        for riga in re.findall(r"<tr[^>]*>(.*?)</tr>", m.group(0), re.S):
+            celle = [H.unescape(re.sub(r"<[^>]+>", "", c)).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", riga, re.S)]
+            if len(celle) >= 7 and re.fullmatch(r"\d{2}/\d{2}/\d{4}", celle[4] or ""):
+                g, mm, a = celle[4].split("/")
+                out.append({"tipo": tipo, "nave": celle[1], "merce": celle[2], "ormeggio": celle[3],
+                            "giorno": f"{a}-{mm}-{g}", "ora": celle[5], "conf": celle[6]})
+    return out
+
+
+def applica_conferme(dati, righe):
+    for r in righe:
+        for n in dati.get("navi", []):
+            if simili(n["nome"], r["nave"]):
+                q = istante(r["giorno"], r["ora"])
+                n["conferma"] = {"tipo": r["tipo"], "ora": r["ora"], "giorno": r["giorno"], "stato": r["conf"],
+                                 "ormeggio": r["ormeggio"], "quando": q.isoformat() if q else None}
+                log("conferma dal sito:", n["nome"], r["tipo"], r["ora"], r["conf"])
 
 
 # ---------------------------------------------------------------- principale
@@ -342,44 +616,59 @@ def main():
     if not codice:
         sys.exit("manca CODICE_MAPPA")
     k = chiave(codice)
+    banchine = leggi_banchine(k)
     uscita = os.path.join(BASE, "navi.enc.json")
     dati = apri(k, uscita) or {}
     if dati.get("esempio"):
-        dati = {"mmsi": dati.get("mmsi", {})}
+        dati = {}
+    dati.setdefault("navi", [])
     adesso = datetime.now(timezone.utc)
     forza = "--forza-giornale" in sys.argv
 
     sess = requests.Session()
     sess.headers["User-Agent"] = "Mozilla/5.0 (moli-porto; aggiornamento previsioni)"
-    pdf = None
+    pdf, pagina, data = None, "", dati.get("data")
     if "--pdf" in sys.argv:
-        pdf = open(sys.argv[sys.argv.index("--pdf") + 1], "rb").read()
-        data = sys.argv[sys.argv.index("--pdf") + 2] if len(sys.argv) > sys.argv.index("--pdf") + 2 else dati.get("data")
+        i = sys.argv.index("--pdf")
+        pdf = open(sys.argv[i + 1], "rb").read()
+        data = sys.argv[i + 2] if len(sys.argv) > i + 2 else data
     else:
-        data, campi = data_giornale_sul_sito(sess)
-        log("giornale sul sito:", data, "| pubblicato:", dati.get("data"))
-        if forza or data != dati.get("data") or not dati.get("navi"):
-            pdf = scarica_giornale(sess, campi)
+        try:
+            data_sito, campi, pagina = data_giornale_sul_sito(sess)
+            log("giornale sul sito:", data_sito, "| gia' letto:", dati.get("data"))
+            if forza or data_sito != dati.get("data"):
+                pdf = scarica_giornale(sess, campi); data = data_sito
+        except Exception as e:
+            log("sito non raggiungibile:", type(e).__name__, e)
     if pdf:
         log("leggo il giornale del", data, len(pdf), "byte")
-        navi = navi_dal_giornale(leggi_pdf(pdf), data)
-        dati.update({"data": data, "navi": navi, "letto": adesso.isoformat(),
+        unisci_giornale(dati, navi_dal_giornale(leggi_pdf(pdf), data), data)
+        dati.update({"data": data, "letto": adesso.isoformat(),
                      "fonte": "Capitaneria di Porto di Genova, previsioni del " + data})
-    for n in dati.get("navi", []):
-        n.pop("ais", None)
+    if pagina:
+        try:
+            applica_conferme(dati, leggi_tabelle_sito(pagina))
+        except Exception as e:
+            log("tabella del sito non letta:", e)
 
     chiave_ais = os.environ.get("AISSTREAM_KEY")
-    if chiave_ais and dati.get("navi"):
-        pos, statici = asyncio.run(ascolta_ais(chiave_ais, int(os.environ.get("AIS_SECONDI", "150"))))
-        aggiungi_ais(dati, pos, statici, adesso)
-        dati["ais"] = True
+    if chiave_ais:
+        ora = adesso.astimezone(ROMA)
+        # il primo giro del mattino ascolta di piu': le navi ferme trasmettono ogni 3 minuti
+        secondi = int(os.environ.get("AIS_SECONDI") or (360 if ora.hour == 7 and ora.minute < 30 else 180))
+        pos, statici = asyncio.run(ascolta_ais(chiave_ais, secondi))
+        aggiorna_registro(dati, pos, statici, adesso)
+        aggiorna_presenze(dati, banchine, adesso)
+        dati["ais"] = bool(pos)
     else:
         dati["ais"] = False
+    pulizia(dati, adesso)
     dati["aggiornato"] = datetime.now(timezone.utc).isoformat()
     dati["esempio"] = False
     chiudi(k, dati, uscita)
     log("scritto", uscita, "navi:", len(dati.get("navi", [])),
-        "con AIS:", sum(1 for n in dati.get("navi", []) if n.get("ais")))
+        "con AIS:", sum(1 for n in dati.get("navi", []) if n.get("ais")),
+        "in banchina:", sum(1 for n in dati.get("navi", []) if (n.get("ais") or {}).get("ormeggiata")))
 
 
 if __name__ == "__main__":
