@@ -246,6 +246,7 @@ def navi_dal_giornale(righe, data):
             n.setdefault("dubbi", []).append("imo")
     navi = list(per_nave.values())
     for n in navi:
+        n["dove_giornale"] = dict(n["dove"])
         if "dubbi" in n:
             n["dubbi"] = sorted(set(n["dubbi"]))
             if "arrivo" in n["dubbi"] or "partenza" in n["dubbi"]:
@@ -405,6 +406,63 @@ def trova_mmsi(n, dati):
     return None
 
 
+def chiave_posto(dg):
+    """ponte e lato come scritti nel giornale, es. 'RONCO|testata', 'CANEPA|levante'"""
+    if not dg or not dg.get("molo"):
+        return None
+    return str(dg["molo"]).upper() + "|" + (dg.get("lato") or dg.get("punto") or "")
+
+
+def impara(dati, dg, dove):
+    """Taratura dei nomi delle banchine sui dati reali: ogni volta che una nave
+    del giornale e' vista ferma dall'AIS, si annota dove si trova davvero.
+    Cosi' si scopre da soli, per esempio, quale lato di Messina e' Ronco e quale
+    Canepa, e come si chiama il braccio est delle Rinfuse."""
+    k = chiave_posto(dg)
+    if not k:
+        return
+    v = dove["molo"] + "|" + dove["lato"]
+    t = dati.setdefault("taratura", {}).setdefault(k, {})
+    oggi = datetime.now(ROMA).date().isoformat()
+    vist = dati.setdefault("taratura_giorni", {})
+    sig = k + ">" + v + ">" + oggi
+    if sig in vist:
+        return                                   # una sola osservazione al giorno per nave e posto
+    vist[sig] = 1
+    t[v] = t.get(v, 0) + 1
+
+
+def posto_imparato(dati, dg):
+    """Se la taratura e' chiara (almeno 2 osservazioni, 3 su 4 concordi) dice
+    dove sta davvero il posto scritto nel giornale."""
+    t = (dati.get("taratura") or {}).get(chiave_posto(dg) or "-")
+    if not t:
+        return None
+    v, c = max(t.items(), key=lambda x: x[1])
+    if c >= 2 and c / sum(t.values()) >= 0.75:
+        molo, lato = v.split("|")
+        return molo, lato
+    return None
+
+
+def applica_taratura(dati):
+    for n in dati.get("navi", []):
+        if (n.get("ais") or {}).get("ormeggiata"):
+            continue                              # gia' disegnata dove si trova
+        pi = posto_imparato(dati, n.get("dove_giornale"))
+        if pi:
+            molo, lato = pi
+            n["dove"] = {**n["dove"], "molo": molo,
+                         "lato": None if lato == "testata" else lato,
+                         "punto": "testata" if lato == "testata" else n["dove"].get("punto")}
+            n["posto_tarato"] = True
+
+
+def riassunto_taratura(dati):
+    for k, t in sorted((dati.get("taratura") or {}).items()):
+        log("taratura:", k, "->", ", ".join(f"{v} x{c}" for v, c in sorted(t.items(), key=lambda x: -x[1])))
+
+
 def aggiorna_presenze(dati, banchine, adesso):
     """Mette la posizione AIS sulle navi dell'elenco e aggiunge quelle che l'AIS
     vede ferme alle nostre banchine anche se il giornale non le nomina."""
@@ -435,6 +493,7 @@ def aggiorna_presenze(dati, banchine, adesso):
              "dist_nm": round(d, 1), "quando": quando.astimezone(ROMA).strftime("%H.%M")}
         dove = alla_banchina(p["lat"], p["lon"], banchine) if p["sog"] < 0.7 else None
         if dove:
+            impara(dati, n.get("dove_giornale"), dove)
             a["ormeggiata"] = True; a["s_m"] = dove["s_m"]
             n["dove"] = {**n.get("dove", {}), "terminal": dove["terminal"], "molo": dove["molo"],
                          "lato": dove["lato"] if dove["lato"] != "testata" else None,
@@ -604,6 +663,13 @@ def applica_conferme(dati, righe):
         for n in dati.get("navi", []):
             if simili(n["nome"], r["nave"]):
                 q = istante(r["giorno"], r["ora"])
+                try:
+                    import leggi_giornale as L
+                    dg = L.riconosci_accosto(r["ormeggio"])
+                    if dg and not n.get("dove_giornale"):
+                        n["dove_giornale"] = {"terminal": dg["terminal"], "molo": dg["molo"], "lato": dg["lato"], "punto": dg["punto"]}
+                except Exception:
+                    pass
                 n["conferma"] = {"tipo": r["tipo"], "ora": r["ora"], "giorno": r["giorno"], "stato": r["conf"],
                                  "ormeggio": r["ormeggio"], "quando": q.isoformat() if q else None}
                 log("conferma dal sito:", n["nome"], r["tipo"], r["ora"], r["conf"])
@@ -662,6 +728,11 @@ def main():
         dati["ais"] = bool(pos)
     else:
         dati["ais"] = False
+    applica_taratura(dati)
+    riassunto_taratura(dati)
+    # la memoria dei giorni di taratura non serve oltre una settimana
+    lim = (adesso.astimezone(ROMA).date() - timedelta(days=7)).isoformat()
+    dati["taratura_giorni"] = {k: 1 for k in dati.get("taratura_giorni", {}) if k.rsplit(">", 1)[-1] >= lim}
     pulizia(dati, adesso)
     dati["aggiornato"] = datetime.now(timezone.utc).isoformat()
     dati["esempio"] = False
