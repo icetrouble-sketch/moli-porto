@@ -1,11 +1,16 @@
 # Aggiorna le navi del giorno (giornale della Capitaneria + posizioni AIS)
 # ogni 30 minuti dalle 7 alle 21, ora di Genova. Le navi vengono salvate
 # solo cifrate (navi.enc.json) con il codice della mappa.
+#
+# GitHub fa partire le esecuzioni programmate in modo irregolare (a volte
+# poche al giorno). Per questo ogni esecuzione resta accesa e fa da sola un
+# giro ogni 30 minuti, fino alle 21 (al massimo 5 ore e mezza). Le partenze
+# programmate ogni ora servono solo a riaccenderla se si e' fermata.
 name: Navi del giorno
 
 on:
   schedule:
-    - cron: "*/30 4-20 * * *"     # UTC: copre 7-21 sia con l'ora solare sia con quella legale
+    - cron: "5 * * * *"
   workflow_dispatch:
     inputs:
       forza:
@@ -23,13 +28,13 @@ concurrency:
 jobs:
   aggiorna:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 345
     steps:
       - name: Solo dalle 7 alle 21 (ora di Genova)
         id: orario
         run: |
-          ORA=$(TZ=Europe/Rome date +%H)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$ORA" -ge 7 ] && [ "$ORA" -le 21 ]; }; then
+          ORA=$(TZ=Europe/Rome date +%-H)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$ORA" -ge 7 ] && [ "$ORA" -le 20 ]; }; then
             echo "vai=si" >> "$GITHUB_OUTPUT"
           else
             echo "Fuori orario ($ORA)"; echo "vai=no" >> "$GITHUB_OUTPUT"
@@ -45,21 +50,30 @@ jobs:
           sudo apt-get install -y -qq tesseract-ocr poppler-utils > /dev/null
           pip install -q -r strumenti/requisiti.txt
 
-      - name: Aggiorna le navi
+      - name: Giri ogni 30 minuti fino alle 21
         if: steps.orario.outputs.vai == 'si'
         env:
           CODICE_MAPPA: ${{ secrets.CODICE_MAPPA }}
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
         run: |
-          python3 strumenti/aggiorna_navi.py ${{ inputs.forza && '--forza-giornale' || '' }}
-
-      - name: Pubblica
-        if: steps.orario.outputs.vai == 'si'
-        run: |
           git config user.name "aggiornamento-navi"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add navi.enc.json
-          if git diff --cached --quiet; then echo "Niente di nuovo"; exit 0; fi
-          git commit -q -m "Navi aggiornate $(TZ=Europe/Rome date '+%d/%m %H:%M')"
-          # se nel frattempo e' stato caricato qualcos'altro, ci si rimette in pari
-          for i in 1 2 3; do git pull -q --rebase && git push -q && break; sleep 5; done
+          INIZIO=$(date +%s)
+          FINE_MAX=$((INIZIO + 5*3600 + 1800))
+          FINE_SERA=$(TZ=Europe/Rome date -d "21:05" +%s)
+          FINE=$(( FINE_MAX < FINE_SERA ? FINE_MAX : FINE_SERA ))
+          OPZ="${{ inputs.forza && '--forza-giornale' || '' }}"
+          while true; do
+            GIRO=$(date +%s)
+            git pull -q --rebase || true
+            python3 strumenti/aggiorna_navi.py $OPZ || echo "giro non riuscito, si riprova al prossimo"
+            OPZ=""
+            git add navi.enc.json
+            if ! git diff --cached --quiet; then
+              git commit -q -m "Navi aggiornate $(TZ=Europe/Rome date '+%d/%m %H:%M')"
+              for i in 1 2 3; do git pull -q --rebase && git push -q && break; sleep 5; done
+            fi
+            PROSSIMO=$((GIRO + 1800))
+            if [ "$PROSSIMO" -ge "$FINE" ]; then echo "Fine dei giri"; break; fi
+            ATTESA=$((PROSSIMO - $(date +%s))); [ "$ATTESA" -gt 0 ] && sleep "$ATTESA"
+          done
