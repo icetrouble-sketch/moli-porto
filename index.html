@@ -73,7 +73,7 @@
   #mappa{flex:1;position:relative;background:var(--acqua);overflow:hidden;touch-action:none;
     user-select:none;-webkit-user-select:none;cursor:grab}
   #mappa.con-citta{background:var(--terra)}
-  #mappa svg{width:100%;height:100%;display:block}
+  #mappa > #svg{width:100%;height:100%;display:block}
   .molo{cursor:pointer}
   .molo .area{stroke-width:1.6;vector-effect:non-scaling-stroke;transition:opacity .18s}
   .molo.sel .area{stroke:var(--arancio) !important;stroke-width:3.2}
@@ -229,7 +229,80 @@
     width:max-content;max-width:calc(100% - 32px)}
   #toast button{background:transparent;border:none;color:#FFB08F;font-weight:700;font-size:14.5px;padding:6px 8px;cursor:pointer}
 
-  @media (prefers-reduced-motion: reduce){ *{transition:none !important} }
+  /* ---------- Schede in alto: Mappe / Previsioni navi ---------- */
+  .tabs{display:flex;margin-top:10px;background:#EFEBDD;border-radius:12px;padding:3px;gap:3px}
+  .tab{flex:1;padding:8px 6px;border:none;border-radius:9px;background:transparent;font-size:14.5px;font-weight:700;
+    color:var(--grigio);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+  .tab.on{background:#fff;color:var(--inchiostro);box-shadow:0 1px 4px rgba(42,36,31,.12)}
+  .tab .punto{width:7px;height:7px;border-radius:50%;background:var(--arancio)}
+  .orario{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .orario label{font-size:14px;font-weight:600;color:var(--inchiostro);white-space:nowrap}
+  .orario input{flex:1;min-width:0;font:inherit;font-size:16px;font-weight:700;padding:7px 10px;border-radius:11px;
+    border:1.5px solid var(--linea);background:#fff;color:var(--inchiostro);font-variant-numeric:tabular-nums}
+  .orario button{flex:none;padding:8px 12px;border-radius:999px;border:1.5px solid var(--linea);background:#fff;
+    font-size:13.5px;font-weight:700;color:var(--grigio);cursor:pointer}
+  .orario button.on{background:var(--arancio);border-color:var(--arancio);color:var(--latte)}
+
+  /* ---------- Navi sulla mappa ---------- */
+  .nave{cursor:pointer}
+  .nave path{vector-effect:non-scaling-stroke;stroke-linejoin:round}
+  .nave.ok path{fill:#3B5F86;stroke:#fff;stroke-width:1.3}
+  .nave.rischio path{fill:#8FA6C1;stroke:var(--arancio);stroke-width:2;stroke-dasharray:5 3}
+  .nave.no path{fill:rgba(59,95,134,.06);stroke:#5C7898;stroke-width:1.3;stroke-dasharray:4 3}
+  .nave.lampeggia path{animation:lampo 1.1s ease-in-out 3}
+  @keyframes lampo{50%{fill:var(--arancio)}}
+  .et-nave{pointer-events:none}
+  .et-nave rect{fill:rgba(255,255,255,.95);stroke:#3B5F86;stroke-width:1}
+  .et-nave text{font-size:10.5px;font-weight:700;fill:#2E4A69;text-anchor:middle;dominant-baseline:central}
+  .et-nave.no rect{stroke-dasharray:3 2;fill:rgba(253,253,241,.9)}
+  .et-nave.no text{fill:#5C7898;font-weight:600}
+  .lontano .et-nave{display:none}
+  .leg-nave{width:16px;height:7px;border-radius:2px 5px 5px 2px;background:#3B5F86}
+  .legenda small{font-size:12px}
+  .leg-arrivo{margin-left:4px;width:16px;height:7px;border-radius:2px 5px 5px 2px;border:1.3px dashed #5C7898}
+  .pill-navi{position:absolute;left:max(10px, env(safe-area-inset-left,0px));top:10px;z-index:2;
+    background:rgba(253,253,241,.96);border:1px solid var(--linea);border-radius:999px;padding:7px 12px 7px 10px;
+    font-size:13px;font-weight:700;color:#2E4A69;box-shadow:var(--ombra);display:flex;align-items:center;gap:7px;cursor:pointer}
+  .card .navi-riga{margin:2px 0 0;font-size:12.5px;font-weight:600;color:#3B5F86;display:flex;align-items:center;gap:5px}
+
+  /* ---------- Pannello previsioni navi ---------- */
+  #pannelloNavi{flex:1;overflow-y:auto;overscroll-behavior:contain;background:var(--latte);
+    padding:12px max(16px, env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) max(16px, env(safe-area-inset-left,0px))}
+  .pn-info{font-size:13px;color:var(--grigio);margin:0 0 10px}
+  .pn-info b{color:var(--inchiostro)}
+  .riepilogo{display:flex;gap:8px;margin:0 0 14px}
+  .riepilogo div{flex:1;background:#fff;border:1.5px solid var(--linea);border-radius:13px;padding:8px 6px;text-align:center}
+  .riepilogo b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+  .riepilogo span{font-size:11.5px;font-weight:600;color:var(--grigio)}
+  .gruppo{margin:0 0 16px}
+  .gruppo h3{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:15px}
+  .gruppo h3 .n{font-size:12.5px;color:var(--grigio);font-weight:600}
+  .nv{background:#fff;border:1.5px solid var(--linea);border-radius:15px;padding:11px 12px;margin:0 0 8px;box-shadow:var(--ombra)}
+  .nv .su{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .nv h4{margin:0;font-size:15.5px;letter-spacing:-.1px;overflow-wrap:anywhere}
+  .nv .det{margin:2px 0 0;font-size:12.5px;color:var(--grigio)}
+  .nv .orari{margin:7px 0 0;font-size:13.5px;font-variant-numeric:tabular-nums;display:flex;gap:14px;flex-wrap:wrap}
+  .nv .orari span{color:var(--grigio)}
+  .nv .orari b{color:var(--inchiostro)}
+  .nv .perche{margin:6px 0 0;font-size:13px;line-height:1.4}
+  .nv .bottoni{display:flex;gap:8px;margin-top:9px}
+  .nv .bottoni .bottone{flex:1;padding:9px 8px;font-size:13.5px;border-radius:11px}
+  .stato-n{flex:none;font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .stato-n.ok{background:#EAF2EA;color:var(--verde)}
+  .stato-n.rischio{background:rgba(236,94,39,.13);color:var(--arancio-scuro)}
+  .stato-n.no,.stato-n.partita{background:#ECE9E1;color:#6F6A61}
+  .stato-n.rada{background:#E6EEF6;color:#3B5F86}
+  .nv.spenta{box-shadow:none;background:#FAF9F5}
+  .nv.spenta h4{color:#6F6A61}
+  .nv .ais-riga{margin:5px 0 0;font-size:12.5px;color:#3B5F86;font-weight:600}
+  .nessuna{font-size:13px;color:var(--grigio);margin:4px 0 14px}
+  .legenda-stati{background:#fff;border:1px solid var(--linea);border-radius:12px;padding:10px 12px;font-size:12.5px;
+    color:var(--grigio);display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .legenda-stati div{display:flex;gap:8px;align-items:baseline}
+  .legenda-stati .stato-n{min-width:118px;text-align:center}
+  .b-nave{background:#3B5F86;color:#fff}
+
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;animation:none !important} }
 </style>
 </head>
 <body>
@@ -253,18 +326,29 @@
     <h1>Moli del porto</h1>
     <span>Sampierdarena</span>
   </div>
-  <div class="filtri" role="group" aria-label="Filtra i terminal">
+  <div class="tabs" role="tablist" aria-label="Sezioni">
+    <button class="tab on" role="tab" aria-selected="true" data-tab="mappe">Mappe</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="navi">Previsioni navi</button>
+  </div>
+  <div class="filtri" id="filtri" role="group" aria-label="Filtra i terminal">
     <button class="chip on" data-f="tutti">Tutti<span class="n" id="nTutti"></span></button>
     <button class="chip" data-f="da_fare">Da visitare<span class="n" id="nDaFare"></span></button>
     <button class="chip" data-f="fatti">Visitati<span class="n" id="nFatti"></span></button>
+  </div>
+  <div class="orario" id="orario" hidden>
+    <label for="oraVisita">Ci vado alle</label>
+    <input type="time" id="oraVisita" step="900">
+    <button type="button" id="oraAdesso" class="on">Adesso</button>
   </div>
 </header>
 
 <div id="mappa">
   <svg id="svg" role="img" aria-label="Mappa dei moli del porto di Genova"></svg>
+  <button type="button" class="pill-navi" id="pillNavi" hidden></button>
   <div class="legenda" aria-hidden="true">
     <span><i class="leg-varco"></i>Varchi di accesso</span>
     <span><i class="leg-chiuso"></i>Non agibile</span>
+    <span id="legNave" hidden><i class="leg-nave"></i>Nave <i class="leg-arrivo" id="legArrivo" hidden></i><small id="legArrivoT" hidden>arriva dopo</small></span>
   </div>
   <div class="comandi">
     <button id="zPiu" aria-label="Ingrandisci">+</button>
@@ -285,6 +369,7 @@
   <p id="vuotoTesto"></p>
   <button id="vuotoBtn" class="bottone b-secondario" hidden></button>
 </div>
+<div id="pannelloNavi" hidden></div>
 <div id="toast" role="status" hidden><span id="toastTesto"></span><button id="toastBtn">Annulla</button></div>
 
 <div id="velo"></div>
@@ -332,6 +417,7 @@
       .then(function(buf){ testo = buf; return paginaPronta(); })
       .then(function(){
         var buf = testo;
+        window.PORTA.chiave = chiave;   // la stessa chiave apre anche le navi del giorno
         if(!avviata){
           (new Function(new TextDecoder().decode(buf)))();   // definisce CONFIG, VARCHI, SFONDO, TERMINAL
           avviata = true;
@@ -345,7 +431,7 @@
   }
 
   // chiamata dall'app quando scatta il blocco per inattivita'
-  window.PORTA = { dimentica: function(){ ls(CHIAVE_KEY, null); } };
+  window.PORTA = { chiave: null, dimentica: function(){ ls(CHIAVE_KEY, null); window.PORTA.chiave = null; } };
 
   form.addEventListener("submit", function(e){
     e.preventDefault();
@@ -545,7 +631,7 @@ window.avviaApp = function(){
   var svg = document.getElementById("svg");
   var mappaEl = document.getElementById("mappa");
   var NS = "http://www.w3.org/2000/svg";
-  var gRoot, gEtStrade, gEtichette;
+  var gRoot, gEtStrade, gEtichette, gNavi;
   var scala = 1, dx = 0, dy = 0;
   var etStrade = [];   // { el, cls, len, testo }
 
@@ -571,6 +657,7 @@ window.avviaApp = function(){
     disegna();
     costruisciCarosello();
     aggiornaTutto();
+    avviaNavi();
     window.addEventListener("resize", programmaVista);
   }
 
@@ -651,6 +738,10 @@ window.avviaApp = function(){
       });
       gRoot.appendChild(gInt);
     }
+
+    // --- navi del giorno (si riempie quando arrivano i dati) ---
+    gNavi = tag("g", { "class": "strato-navi" });
+    gRoot.appendChild(gNavi);
 
     // --- varchi ---
     gEtichette = tag("g", {});
@@ -753,6 +844,7 @@ window.avviaApp = function(){
   function aggiornaVista(){
     gRoot.setAttribute("transform", "translate(" + dx + "," + dy + ") scale(" + scala + ")");
     var u = upp() / scala;   // unita' della mappa per un pixel dello schermo
+    gEtichette.classList.toggle("lontano", scala < 2.2);
     var et = gEtichette.querySelectorAll("[data-x]");
     for(var i = 0; i < et.length; i++){
       et[i].setAttribute("transform", "translate(" + et[i].getAttribute("data-x") + "," +
@@ -792,6 +884,8 @@ window.avviaApp = function(){
     for(var j = 0; j < vv.length; j++){
       lista.push({ el: vv[j], prio: vv[j].classList.contains("princ") ? 5e3 : 10, varco: true });
     }
+    var nn = gEtichette.querySelectorAll(".et-nave");
+    for(var q = 0; q < nn.length; q++) lista.push({ el: nn[q], prio: nn[q].classList.contains("no") ? 40 : 60 });
     lista.sort(function(a, b){ return b.prio - a.prio; });
     var presi = [];
     lista.forEach(function(o){
@@ -841,8 +935,11 @@ window.avviaApp = function(){
     var xs = grande.map(function(c){ return px(c[1]); }), ys = grande.map(function(c){ return py(c[0]); });
     var cx = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2;
     var cy = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+    centraSuXY(cx, cy, 1.7);
+  }
+  function centraSuXY(cx, cy, minimo){
     var vb = svg.viewBox.baseVal;
-    var s1 = Math.max(scala, 1.7);
+    var s1 = Math.max(scala, minimo);
     var dx1 = vb.x + vb.width / 2 - cx * s1, dy1 = vb.y + vb.height / 2 - cy * s1;
     var s0 = scala, dx0 = dx, dy0 = dy, t0 = null;
     var ridotto = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -916,6 +1013,8 @@ window.avviaApp = function(){
 
   function tocco(x, y){
     var el = document.elementFromPoint(x, y);
+    var nv = el && el.closest ? el.closest(".nave") : null;
+    if(nv){ apriNave(Number(nv.getAttribute("data-i"))); return; }
     var g = el && el.closest ? el.closest(".molo") : null;
     seleziona(g ? g.getAttribute("data-id") : null, true);
   }
@@ -963,6 +1062,7 @@ window.avviaApp = function(){
         '<div class="testa"><span class="pastiglia"></span><span class="badge"></span></div>' +
         '<h3></h3><p class="moli"></p>' +
         (t.accessoBreve ? '<p class="breve"><span class="modo-ico"></span><span class="breve-t"></span></p>' : '') +
+        '<p class="navi-riga" hidden></p>' +
         '<div class="riga-az">' +
           '<a class="bottone b-primario vai" target="_blank" rel="noopener">' + ICONA_VAI + 'Come ci arrivo</a>' +
           '<button class="az" type="button"></button>' +
@@ -1310,6 +1410,394 @@ window.avviaApp = function(){
   document.addEventListener("visibilitychange", function(){
     if(document.visibilityState === "visible" && avviato) controllaGiro();
   });
+
+  /* ================= NAVI DEL GIORNO =================
+     Le navi arrivano dal giornale "Previsioni" della Capitaneria (navi.enc.json,
+     cifrato con lo stesso codice). Per l'orario della visita scelto si calcola
+     se la nave sara' in banchina: in tempo, a rischio, non ancora arrivata,
+     gia' partita, in rada. Le navi si disegnano sulla banchina indicata. */
+  var CHIAVE_ORA = "porto_ora_visita_v1";
+  var NAVI = null, naviErrore = "", tab = "mappe";
+  var oraScelta = (function(){
+    var o = leggi(CHIAVE_ORA, null);
+    return (o && o.giorno === oggi()) ? o.min : null;      // vale solo per oggi
+  })();
+  var BANCHINE = window.BANCHINE || {};
+  var M_UNITA = 1.1132;                                   // metri per unita' della mappa
+  var LINK_GIORNALE = "https://www.shipsinformationgenova.com/";
+  var TIPI = { "CONT.": "Portacontainer", "RO/RO": "Ro-ro", "BULK": "Rinfusiera", "CHIM.": "Chimichiera",
+               "TANK": "Cisterna", "CARGO": "Cargo", "PASS.": "Passeggeri", "PASS": "Passeggeri", "CRUISE": "Crociera" };
+  var ICONA_NAVE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15l2 5h14l2-5H3z"/><path d="M6 15V9h12v6M10 9V5h4v4"/></svg>';
+
+  function oggi(){ var d = new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function adesso(){ var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+  function oraVisita(){ return oraScelta === null ? adesso() : oraScelta; }
+  function hhmm(m){ m = Math.max(0, Math.min(1439, Math.round(m))); return ("0" + Math.floor(m / 60)).slice(-2) + ":" + ("0" + (m % 60)).slice(-2); }
+  function giornoEsteso(iso){
+    var m = ["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+    var p = String(iso || "").split("-");
+    return p.length === 3 ? Number(p[2]) + " " + m[Number(p[1]) - 1] + " " + p[0] : iso;
+  }
+  /* orario del giornale -> [da, a, incerto] in minuti */
+  function orario(s){
+    if(!s) return null;
+    s = String(s).toUpperCase().trim();
+    var m = s.match(/^(\d{1,2})[.:](\d{2})$/);
+    if(m){ var v = Number(m[1]) * 60 + Number(m[2]); return [v, v, false]; }
+    if(s.indexOf("ALBA") >= 0) return [330, 450, true];
+    if(/A\.?\s?M/.test(s)) return [0, 720, true];
+    if(/P\.?\s?M/.test(s)) return [720, 1439, true];
+    return null;
+  }
+  function quando(r){
+    if(!r) return "";
+    if(!r[2]) return "alle " + hhmm(r[0]);
+    if(r[0] === 330) return "all'alba";
+    return r[0] === 0 ? "in mattinata" : "nel pomeriggio o in serata";
+  }
+  function breve(r){ return !r ? "—" : (!r[2] ? hhmm(r[0]) : (r[0] === 330 ? "alba" : (r[0] === 0 ? "mattina" : "pomeriggio"))); }
+
+  /* lo stato di una nave all'orario della visita */
+  function statoNave(n, V){
+    var a = orario(n.arrivo), p = orario(n.partenza);
+    var ais = n.ais || null;
+    if(ais && ais.ormeggiata) a = null;                       // l'AIS la vede gia' ferma in banchina
+    else if(ais && ais.eta && a) a = orario(ais.eta) || a;    // stima dall'AIS, piu' fresca del giornale
+    if(n.dove.in_rada && !(ais && ais.ormeggiata))
+      return { c: "rada", t: "In rada", d: "Arriva in rada" + (a ? " " + quando(a) : "") + " e aspetta il posto in banchina: per ora non si sale." };
+    if(ais && ais.ancora && a)
+      return { c: "rada", t: "In rada", d: "Alle " + ais.quando.replace(".", ":") + " l'AIS la vede ferma in rada: aspetta di entrare." };
+    if(p && V > p[1]) return { c: "partita", t: "Già partita", d: "Partenza " + quando(p) + "." };
+    if(a && V < a[0]) return { c: "no", t: "Non arriva in tempo", d: "Arriva " + quando(a) + ", dopo l'orario della visita." };
+    if(a && V < a[1] + 60)
+      return { c: "rischio", t: "A rischio", d: a[2] ? "Arriva " + quando(a) + ": l'orario non è preciso."
+                                                     : "Arriva alle " + hhmm(a[0]) + ": all'orario della visita potrebbe essere ancora in manovra." };
+    if(p && V >= p[0] - 60)
+      return { c: "rischio", t: "A rischio", d: p[2] ? "Parte " + quando(p) + ": l'orario non è preciso."
+                                                     : "Parte alle " + hhmm(p[0]) + ": potrebbe essere già in partenza." };
+    if(n.dubbi && (n.dubbi.indexOf("arrivo") >= 0 || n.dubbi.indexOf("partenza") >= 0))
+      return { c: "rischio", t: "A rischio", d: "Un orario del giornale è stato letto male: controlla su VesselFinder o sul giornale." };
+    var d = (ais && ais.ormeggiata) ? "L'AIS la vede ferma in banchina alle " + ais.quando.replace(".", ":") : "In banchina";
+    if(a) d += " dall'arrivo " + quando(a);
+    if(p) d += (a ? "," : "") + " fino alla partenza " + quando(p);
+    return { c: "ok", t: "In tempo", d: d + "." };
+  }
+
+  /* ---------- dati ---------- */
+  function daB64(s){ var b = atob(s), u = new Uint8Array(b.length); for(var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+  function apriCifrate(obj){
+    var k = window.PORTA && window.PORTA.chiave;
+    if(!k) return Promise.reject(new Error("chiave"));
+    return crypto.subtle.decrypt({ name: "AES-GCM", iv: daB64(obj.iv) }, k, daB64(obj.ct))
+      .then(function(buf){ return JSON.parse(new TextDecoder().decode(buf)); });
+  }
+  var caricando = false;
+  function caricaNavi(){
+    if(caricando) return;
+    caricando = true;
+    var fonte = window.NAVI_CIFRATE ? Promise.resolve(window.NAVI_CIFRATE)
+      : fetch("navi.enc.json?t=" + Date.now(), { cache: "no-store" }).then(function(r){
+          if(!r.ok) throw new Error("http " + r.status); return r.json(); });
+    fonte.then(apriCifrate).then(function(d){
+      NAVI = d; naviErrore = "";
+      // indice stabile per i tocchi sulla mappa
+      NAVI.navi.forEach(function(n, i){ n._i = i; });
+    }).catch(function(e){
+      if(!NAVI) naviErrore = /chiave/.test(String(e && e.message)) ? "" : "Previsioni non disponibili ora (senza segnale?). Riprova più tardi.";
+    }).then(function(){ caricando = false; aggiornaNavi(); });
+  }
+
+  /* ---------- posizione sulla banchina ---------- */
+  function trattoDi(n){
+    var b = BANCHINE[String(n.dove.molo || "").toUpperCase()];
+    if(!b) return null;
+    var lato = n.dove.lato;
+    var nome = (lato && b[lato]) ? lato : (n.dove.punto === "testata" && b.testata ? "testata" :
+               (b.ponente ? "ponente" : (b.levante ? "levante" : (b.testata ? "testata" : null))));
+    if(!nome) return null;
+    var l = b[nome], ac = (b.acqua && b.acqua[nome]) || [0, 0];
+    var A = { x: px(l[0][1]), y: py(l[0][0]) }, B = { x: px(l[1][1]), y: py(l[1][0]) };
+    var len = Math.hypot(B.x - A.x, B.y - A.y);
+    return { chiave: n.dove.molo + "/" + nome, A: A, len: len,
+             d: { x: (B.x - A.x) / len, y: (B.y - A.y) / len },
+             acqua: { x: ac[1], y: -ac[0] }, suiLati: nome !== "testata" };
+  }
+  function disegnaNavi(V){
+    if(!gNavi) return;
+    gNavi.innerHTML = "";
+    Array.prototype.forEach.call(gEtichette.querySelectorAll(".et-nave"), function(e){ e.remove(); });
+    var nB = 0, nA = 0;
+    if(!NAVI) return contaLegenda(0, 0);
+    var perTratto = {};
+    NAVI.navi.forEach(function(n){
+      var st = statoNave(n, V);
+      if(st.c === "partita" || st.c === "rada") return;
+      var tt = trova(n.dove.terminal); if(!tt || !agibile(tt)) return;
+      var tr = trattoDi(n); if(!tr) return;
+      var L = (Number(n.loa) || 150) / M_UNITA, W = (Number(n.larg) || 25) / M_UNITA;
+      var s;
+      if(tr.suiLati && n.dove.punto === "radice") s = 8 / M_UNITA;
+      else if(tr.suiLati && (n.dove.punto === "testata" || n.dove.punto === "prolungamento")) s = tr.len - L;
+      else s = (tr.len - L) / 2;
+      (perTratto[tr.chiave] = perTratto[tr.chiave] || []).push({ n: n, st: st, tr: tr, L: L, W: W, s: s });
+    });
+    Object.keys(perTratto).forEach(function(k){
+      var lista = perTratto[k];
+      // prima si sistemano le navi presenti, una dopo l'altra senza sovrapporsi
+      var presenti = lista.filter(function(o){ return o.st.c !== "no"; }).sort(function(a, b){ return a.s - b.s; });
+      for(var i = 1; i < presenti.length; i++){
+        var prima = presenti[i - 1];
+        presenti[i].s = Math.max(presenti[i].s, prima.s + prima.L + 12 / M_UNITA);
+      }
+      // quelle che arrivano dopo: solo se il posto e' libero
+      var arrivi = lista.filter(function(o){ return o.st.c === "no"; }).filter(function(o){
+        return !presenti.some(function(q){ return o.s < q.s + q.L && o.s + o.L > q.s; });
+      });
+      presenti.concat(arrivi).forEach(function(o){
+        disegnaScafo(o);
+        if(o.st.c === "no") nA++; else nB++;
+      });
+    });
+    contaLegenda(nB, nA);
+  }
+  function contaLegenda(nB, nA){
+    document.getElementById("legNave").hidden = !(nB || nA);
+    document.getElementById("legArrivo").hidden = !nA;
+    document.getElementById("legArrivoT").hidden = !nA;
+  }
+  function disegnaScafo(o){
+    var tr = o.tr, L = o.L, W = o.W;
+    var off = W / 2 + 5 / M_UNITA;                          // dal filo banchina al centro della nave
+    var c0 = { x: tr.A.x + tr.d.x * o.s + tr.acqua.x * off, y: tr.A.y + tr.d.y * o.s + tr.acqua.y * off };
+    var verso = /PRUA A TERRA/i.test(o.n.accosto || "") ? -1 : 1;  // prua verso la punta, salvo "prua a terra"
+    var prua = Math.min(L * 0.14, 28 / M_UNITA);
+    // scafo in coordinate locali: u lungo la banchina (0..L), w verso l'acqua
+    var loc = [[0, -W/2], [L - prua, -W/2], [L, 0], [L - prua, W/2], [0, W/2]];
+    if(verso < 0) loc = loc.map(function(q){ return [L - q[0], q[1]]; });
+    var d = tr.d, a = tr.acqua;
+    var pts = loc.map(function(q){ return (c0.x + d.x * q[0] + a.x * q[1]).toFixed(1) + " " + (c0.y + d.y * q[0] + a.y * q[1]).toFixed(1); });
+    var g = tag("g", { "class": "nave " + o.st.c, "data-i": o.n._i });
+    g.appendChild(tag("path", { d: "M" + pts.join(" L") + " Z" }));
+    gNavi.appendChild(g);
+    // nome della nave, a dimensione fissa sullo schermo
+    var cx = c0.x + d.x * L / 2 + a.x * (W / 2 + 14), cy = c0.y + d.y * L / 2 + a.y * (W / 2 + 14);
+    var e = tag("g", { "class": "et-nave " + o.st.c, "data-x": cx, "data-y": cy });
+    var r = tag("rect", { rx: 6, ry: 6 }), t = tag("text", {});
+    t.textContent = o.n.nome;
+    e.appendChild(r); e.appendChild(t);
+    gEtichette.appendChild(e);
+    o.n._xy = { x: c0.x + d.x * L / 2, y: c0.y + d.y * L / 2 };
+    var w = Math.max(30, o.n.nome.length * 6.4);
+    r.setAttribute("x", -(w / 2 + 6)); r.setAttribute("width", w + 12);
+    r.setAttribute("y", -9); r.setAttribute("height", 18);
+  }
+
+  /* ---------- schede in alto ---------- */
+  function impostaTab(t){
+    tab = t;
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
+      var on = b.getAttribute("data-tab") === t;
+      b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    var navi = t === "navi";
+    document.getElementById("filtri").hidden = navi;
+    document.getElementById("orario").hidden = !navi;
+    document.getElementById("pannelloNavi").hidden = !navi;
+    mappaEl.hidden = navi;
+    if(navi){
+      chiudi();
+      document.getElementById("giro").hidden = true;
+      carosello.hidden = true; vuoto.hidden = true;
+      aggiornaNavi();
+      document.getElementById("pannelloNavi").scrollTop = 0;
+    }else{
+      aggiornaTutto();
+      programmaVista();
+    }
+  }
+  Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
+    b.addEventListener("click", function(){ impostaTab(b.getAttribute("data-tab")); });
+  });
+
+  var inOra = document.getElementById("oraVisita"), btAdesso = document.getElementById("oraAdesso");
+  inOra.addEventListener("change", function(){
+    var m = /^(\d{2}):(\d{2})/.exec(inOra.value || "");
+    oraScelta = m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    scrivi(CHIAVE_ORA, oraScelta === null ? null : { giorno: oggi(), min: oraScelta });
+    aggiornaNavi();
+  });
+  btAdesso.addEventListener("click", function(){
+    oraScelta = null; scrivi(CHIAVE_ORA, null); aggiornaNavi();
+  });
+  document.getElementById("pillNavi").addEventListener("click", function(){ impostaTab("navi"); });
+
+  /* ---------- pannello delle previsioni ---------- */
+  function aggiornaNavi(){
+    var V = oraVisita();
+    if(document.activeElement !== inOra) inOra.value = hhmm(V);
+    btAdesso.classList.toggle("on", oraScelta === null);
+    disegnaNavi(V);
+    aggiornaVista();
+    // riga sulle schede dei terminal e pillola sulla mappa
+    var conta = {}, tot = 0;
+    if(NAVI) NAVI.navi.forEach(function(n){
+      var tt = trova(n.dove.terminal); if(!tt || !agibile(tt)) return;
+      var c = statoNave(n, V).c;
+      if(c === "ok" || c === "rischio"){ conta[n.dove.terminal] = (conta[n.dove.terminal] || 0) + 1; tot++; }
+    });
+    tutti.forEach(function(t){
+      var r = carosello.querySelector('.card[data-id="' + t.id + '"] .navi-riga');
+      if(!r) return;
+      var k = conta[t.id] || 0;
+      r.hidden = !k || !agibile(t);
+      r.innerHTML = ICONA_NAVE + "<span>" + k + (k === 1 ? " nave" : " navi") + " alle " + hhmm(V) + "</span>";
+    });
+    var pill = document.getElementById("pillNavi");
+    pill.hidden = !NAVI;
+    pill.innerHTML = ICONA_NAVE + "<span>" + tot + (tot === 1 ? " nave" : " navi") + " in porto alle " + hhmm(V) + "</span>";
+    if(tab === "navi") disegnaPannello(V);
+  }
+
+  function disegnaPannello(V){
+    var el = document.getElementById("pannelloNavi");
+    if(!NAVI){
+      el.innerHTML = '<p class="pn-info">' + (naviErrore ? esc(naviErrore) : "Carico le previsioni…") + '</p>';
+      return;
+    }
+    var h = "";
+    if(NAVI.esempio)
+      h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Esempio.</b> Navi lette dal giornale del ' + esc(giornoEsteso(NAVI.data)) +
+           '. L\'aggiornamento automatico e le posizioni in tempo reale si attivano quando colleghiamo aisstream.</div>';
+    else if(NAVI.data !== oggi())
+      h += '<div class="nota attenzione" style="margin:0 0 10px">Il giornale è del <b>' + esc(giornoEsteso(NAVI.data)) +
+           '</b>: quello di oggi non è ancora arrivato. Gli orari valgono per quel giorno.</div>';
+    var agg = NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
+    h += '<p class="pn-info">Giornale del <b>' + esc(giornoEsteso(NAVI.data)) + '</b>' +
+         (agg && !isNaN(agg) ? ' · aggiornato alle ' + hhmm(agg.getHours() * 60 + agg.getMinutes()) : '') +
+         ' · posizioni AIS ' + (NAVI.ais ? 'attive' : 'non ancora attive') + '</p>';
+
+    var conti = { ok: 0, rischio: 0, no: 0 };
+    var gruppi = {};
+    NAVI.navi.forEach(function(n){
+      var t = trova(n.dove.terminal);
+      if(!t || !agibile(t)) return;
+      var st = statoNave(n, V);
+      if(conti[st.c] !== undefined) conti[st.c]++;
+      (gruppi[t.id] = gruppi[t.id] || []).push({ n: n, st: st });
+    });
+    h += '<div class="riepilogo">' +
+         '<div><b>' + conti.ok + '</b><span>In tempo</span></div>' +
+         '<div><b>' + conti.rischio + '</b><span>A rischio</span></div>' +
+         '<div><b>' + conti.no + '</b><span>Arrivano dopo</span></div></div>';
+
+    var ordine = { ok: 0, rischio: 1, no: 2, rada: 3, partita: 4 };
+    var senza = [];
+    tutti.forEach(function(t){
+      if(!agibile(t)) return;
+      var g = gruppi[t.id];
+      if(!g){ senza.push(t.nome); return; }
+      g.sort(function(a, b){ return ordine[a.st.c] - ordine[b.st.c]; });
+      var utili = g.filter(function(o){ return o.st.c === "ok" || o.st.c === "rischio"; }).length;
+      h += '<section class="gruppo"><h3><span class="pastiglia" style="background:' + t.colore + '"></span>' + esc(t.nome) +
+           '<span class="n">' + utili + ' su ' + g.length + '</span></h3>';
+      g.forEach(function(o){ h += cartaNave(o.n, o.st); });
+      h += '</section>';
+    });
+    if(senza.length) h += '<p class="nessuna">Nessuna nave prevista: ' + esc(senza.join(", ")) + '.</p>';
+    h += '<div class="legenda-stati">' +
+         '<div><span class="stato-n ok">In tempo</span>in banchina all\'orario della visita, con almeno un\'ora di margine</div>' +
+         '<div><span class="stato-n rischio">A rischio</span>arriva o parte vicino all\'orario della visita, o l\'orario non è preciso</div>' +
+         '<div><span class="stato-n no">Non arriva in tempo</span>arriva dopo l\'orario della visita</div>' +
+         '<div><span class="stato-n rada">In rada</span>aspetta fuori dal porto il posto in banchina</div></div>' +
+         '<a class="bottone b-secondario" style="margin-top:12px" target="_blank" rel="noopener" href="' + LINK_GIORNALE + '">Note della Capitaneria (shipsinformationgenova)</a>';
+    el.innerHTML = h;
+    Array.prototype.forEach.call(el.querySelectorAll("[data-mappa]"), function(b){
+      b.addEventListener("click", function(){ mostraSullaMappa(Number(b.getAttribute("data-mappa"))); });
+    });
+  }
+
+  function cartaNave(n, st){
+    var spenta = st.c === "partita" || st.c === "no" || st.c === "rada";
+    var a = orario(n.arrivo), p = orario(n.partenza);
+    var sullaMappa = st.c !== "partita" && st.c !== "rada" && trattoDi(n);
+    return '<div class="nv' + (spenta ? " spenta" : "") + '">' +
+      '<div class="su"><h4>' + esc(n.nome) + '</h4><span class="stato-n ' + st.c + '">' + st.t + '</span></div>' +
+      '<p class="det">' + esc(TIPI[n.tipo] || n.tipo || "") + (n.loa ? ' · ' + Math.round(n.loa) + ' m' : '') + ' · ' + esc(n.accosto) + '</p>' +
+      '<p class="orari">' + (a ? '<span>Arrivo <b>' + breve(a) + '</b></span>' : '<span>Già in porto</span>') +
+                            (p ? '<span>Partenza <b>' + breve(p) + '</b></span>' : '') + '</p>' +
+      '<p class="perche">' + esc(st.d) + (n.nota ? ' ' + esc(n.nota) : '') + '</p>' +
+      (n.ais ? '<p class="ais-riga">' + esc(testoAIS(n.ais)) + '</p>' : '') +
+      '<div class="bottoni">' +
+        (sullaMappa ? '<button type="button" class="bottone b-secondario" data-mappa="' + n._i + '">Sulla mappa</button>' : '') +
+        '<a class="bottone b-nave" target="_blank" rel="noopener" href="' + linkVF(n) + '">Vedi su VesselFinder</a>' +
+      '</div></div>';
+  }
+  function testoAIS(a){
+    var t = "Posizione AIS delle " + String(a.quando || "").replace(".", ":") + ": ";
+    if(a.ormeggiata) return t + "ferma in banchina.";
+    if(a.ancora) return t + "ferma in rada, a " + a.dist_nm + " miglia.";
+    return t + "a " + a.dist_nm + " miglia, " + a.vel + " nodi" + (a.eta ? ", arrivo stimato alle " + a.eta.replace(".", ":") : "") + ".";
+  }
+  function linkVF(n){
+    return /^\d{7}$/.test(n.imo || "") ? "https://www.vesselfinder.com/vessels/details/" + n.imo
+                                       : "https://www.vesselfinder.com/vessels?name=" + encodeURIComponent(n.nome);
+  }
+  function mostraSullaMappa(i){
+    impostaTab("mappe");
+    var n = NAVI && NAVI.navi[i];
+    if(!n || !n._xy) return;
+    seleziona(null, true);
+    centraSuXY(n._xy.x, n._xy.y, 3.2);
+    var g = gNavi.querySelector('.nave[data-i="' + i + '"]');
+    if(g){ g.classList.remove("lampeggia"); void g.getBoundingClientRect(); g.classList.add("lampeggia"); }
+  }
+
+  /* ---------- scheda della nave (toccando la nave sulla mappa) ---------- */
+  function apriNave(i){
+    var n = NAVI && NAVI.navi[i];
+    if(!n) return;
+    var t = trova(n.dove.terminal);
+    var V = oraVisita(), st = statoNave(n, V);
+    var a = orario(n.arrivo), p = orario(n.partenza);
+    scheda.innerHTML =
+      '<div class="testa-scheda" id="testaScheda"><div class="maniglia"></div>' +
+        '<button class="chiudi-scheda" id="btChiudi" type="button" aria-label="Chiudi la scheda">' +
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
+        '</button></div>' +
+      '<div class="barra" style="background:#3B5F86"></div>' +
+      '<h2>' + esc(n.nome) + '</h2>' +
+      '<p class="sub">' + esc(TIPI[n.tipo] || n.tipo || "") + (t ? ' · ' + esc(t.nome) : '') + '</p>' +
+      '<div class="nota' + (st.c === "ok" ? "" : " attenzione") + '"><span class="stato-n ' + st.c + '">' + st.t +
+        '</span> alle ' + hhmm(V) + '. ' + esc(st.d) + '</div>' +
+      '<div class="azioni">' +
+        '<a class="bottone b-nave" target="_blank" rel="noopener" href="' + linkVF(n) + '">Vedi su VesselFinder</a>' +
+        (t ? '<a class="bottone b-primario" target="_blank" rel="noopener" href="' + linkGPS(t) + '">' + ICONA_VAI + 'Come ci arrivo (' + esc(t.nome) + ')</a>' : '') +
+      '</div>' +
+      (n.ais ? riga("AIS", esc(testoAIS(n.ais))) : "") +
+      riga("Accosto", esc(n.accosto)) +
+      riga("Arrivo", a ? quando(a).replace(/^alle /, "") : "già in porto") +
+      riga("Partenza", p ? quando(p).replace(/^alle /, "") : "non prevista oggi") +
+      (n.nota ? riga("Nota", esc(n.nota)) : "") +
+      riga("Misure", (n.loa ? n.loa + " m" : "—") + (n.larg ? " × " + n.larg + " m" : "")) +
+      riga("IMO", esc(n.imo || "—")) +
+      (n.agenzia ? riga("Agenzia", esc(n.agenzia)) : "") +
+      '<p class="piede">Dal giornale della Capitaneria del ' + esc(giornoEsteso(NAVI.data)) + '.<br>' +
+      '<a href="' + LINK_GIORNALE + '" target="_blank" rel="noopener" style="color:inherit">shipsinformationgenova.com</a></p>';
+    if(!scheda.classList.contains("on")){ try{ history.pushState({ scheda: true }, ""); }catch(e){} }
+    scheda.classList.add("on"); velo.classList.add("on"); scheda.scrollTop = 0;
+    document.getElementById("btChiudi").addEventListener("click", function(){ chiudi(); });
+    preparaTrascinamento();
+  }
+
+  function avviaNavi(){
+    caricaNavi();
+    // ogni 10 minuti si riprende il file (il server lo aggiorna ogni 30) e ogni minuto si ricalcola
+    setInterval(function(){ if(document.visibilityState === "visible") caricaNavi(); }, 10 * 60 * 1000);
+    setInterval(function(){ if(oraScelta === null) aggiornaNavi(); }, 60 * 1000);
+    document.addEventListener("visibilitychange", function(){
+      if(document.visibilityState === "visible"){ caricaNavi(); }
+    });
+  }
 
   if(pinRicordato) sblocca();
 
