@@ -34,6 +34,9 @@ SEGNALE_RECENTE = timedelta(minutes=40)     # una nave solo-AIS entra nell'elenc
 ASSENZE_MAX = 2                             # giri di fila senza sentirla (con buona ricezione) prima di 'segnale perso'
 RICEZIONE_MIN = 5                           # navi ferme nei moli (ultime 2 ore) necessarie per giudicare la ricezione
 RICEZIONE_QUOTA = 0.6                       # quota di quelle sentita in questo giro per dire che la ricezione e' buona
+FINESTRA_RICEZIONE = timedelta(hours=2)      # le navi ferme nei moli sentite da meno di cosi' fanno da riferimento
+FINESTRA_RICEZIONE_MAX = timedelta(hours=8)  # ... e di notte, con i giri distanti, si allarga ma non oltre questo
+ASCOLTO_NOTTE = 1200                         # secondi di ascolto AIS nei giri della notte (22-7): sono pochi, si ascolta di piu'
 SEGUITE = ("636092930",)                    # MMSI di cui ogni giro scrive la storia (diagnosi: CHENNAI EXPRESS)
 # zona in cui ascoltare l'AIS: Mar Ligure e dintorni
 AIS_BOX = [[42.00, 6.00], [44.60, 11.00]]   # da Marsiglia all'Elba: le navi in arrivo si vedono ore prima
@@ -702,13 +705,26 @@ def nei_moli(p):
     return MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]
 
 
-def qualita_ricezione(dati, sentite, adesso):
+def finestra_ricezione(dati, adesso):
+    """Quanto indietro si guardano le navi ferme nei moli per giudicare la ricezione. Di giorno i giri sono
+    ogni 15 minuti e bastano 2 ore. Di notte i giri sono distanti 3-4 ore: con 2 ore il riferimento sarebbe
+    vuoto e la regola dell'assenza non scatterebbe mai. Si guarda quindi indietro fino al giro prima
+    (piu' 45 minuti: l'ascolto del giro prima e' cominciato fino a 20 minuti prima della sua registrazione)."""
+    try:
+        prima = datetime.fromisoformat(dati["aggiornato"])
+    except (KeyError, TypeError, ValueError):
+        return FINESTRA_RICEZIONE
+    return min(max(FINESTRA_RICEZIONE, adesso - prima + timedelta(minutes=45)), FINESTRA_RICEZIONE_MAX)
+
+
+def qualita_ricezione(dati, sentite, adesso, finestra=FINESTRA_RICEZIONE):
     """(buona, ferme_nei_moli, di_cui_sentite). L'AIS in 8 minuti non sente tutte le navi ferme, anche se
     ciascuna trasmette ogni 3 minuti: aisstream copre a macchia. Il silenzio di una nave vuol dire qualcosa
     solo se in questo giro si e' sentita la maggior parte delle navi che l'ultima volta erano ferme nei moli
-    (segnale di meno di 2 ore fa). Se se ne sente poche e' la copertura che e' calata: nessuna nave e' 'assente'."""
+    (segnale piu' recente della finestra: 2 ore, di notte fino al giro prima). Se se ne sente poche e' la
+    copertura che e' calata: nessuna nave e' 'assente'."""
     riferimento = [m for m, p in (dati.get("registro") or {}).items()
-                   if p["sog"] < 0.7 and nei_moli(p) and adesso - datetime.fromisoformat(p["quando"]) <= timedelta(hours=2)]
+                   if p["sog"] < 0.7 and nei_moli(p) and adesso - datetime.fromisoformat(p["quando"]) <= finestra]
     sentite_ora = sum(1 for m in riferimento if m in sentite)
     buona = len(riferimento) >= RICEZIONE_MIN and sentite_ora >= RICEZIONE_QUOTA * len(riferimento)
     return buona, len(riferimento), sentite_ora
@@ -1298,6 +1314,20 @@ def applica_conferme(dati, righe):
 
 
 # ---------------------------------------------------------------- principale
+def secondi_ascolto(ora):
+    """Quanto si ascolta l'AIS in questo giro. ora: l'orario di Genova.
+    Una nave ferma trasmette la posizione ogni 3 minuti, ma nome e IMO solo ogni 6, e aisstream ne
+    sente solo una parte per volta (28/10: dal 40% all'80% delle navi ferme in un giro da 8 minuti).
+    Di giorno si ascolta 10 minuti (12 al primo giro del mattino): ogni giro dura meno di 12 minuti, il ciclo e' di 15.
+    Di notte i giri sono solo tre e distanti ore: se ne perdi uno hai perso 4 ore, quindi si ascolta 20 minuti.
+    AIS_SECONDI nell'ambiente vince su tutto (prove)."""
+    if os.environ.get("AIS_SECONDI"):
+        return int(os.environ["AIS_SECONDI"])
+    if ora.hour >= 22 or ora.hour < 7:                # l'ultimo giro del giorno puo' partire fino alle 21:04
+        return ASCOLTO_NOTTE
+    return 720 if ora.hour == 7 and ora.minute < 30 else 600
+
+
 def main():
     import requests
     codice = os.environ.get("CODICE_MAPPA")
@@ -1371,17 +1401,17 @@ def main():
     chiave_ais = os.environ.get("AISSTREAM_KEY")
     if chiave_ais:
         ora = adesso.astimezone(ROMA)
-        # Una nave ferma trasmette la posizione ogni 3 minuti, ma nome e IMO solo ogni 6, e aisstream ne
-        # sente solo una parte per volta (28/10: dal 40% all'80% delle navi ferme in un giro da 8 minuti).
-        # Si ascolta quindi 10 minuti (12 al primo giro del mattino): ogni giro dura meno di 12 minuti, il ciclo e' di 15.
-        secondi = int(os.environ.get("AIS_SECONDI") or (720 if ora.hour == 7 and ora.minute < 30 else 600))
+        # quanto si ascolta: vedi secondi_ascolto
+        secondi = secondi_ascolto(ora)
         pos, statici = asyncio.run(ascolta_ais(chiave_ais, secondi))
         aggiorna_registro(dati, pos, statici, adesso)
         # ricezione buona = in questo giro si sono sentite abbastanza navi dentro i moli: solo allora il
         # silenzio di una nave vuol dire qualcosa (un calo di copertura toglierebbe tutte le navi insieme)
         sentite = set(pos)
-        ricezione_ok, n_rif, n_sentite = qualita_ricezione(dati, sentite, adesso)
-        log("AIS: navi ferme nei moli (ultime 2 ore)", n_rif, "- sentite in questo giro", n_sentite, "- ricezione",
+        finestra = finestra_ricezione(dati, adesso)       # dati["aggiornato"] e' ancora quello del giro prima
+        ricezione_ok, n_rif, n_sentite = qualita_ricezione(dati, sentite, adesso, finestra)
+        log("AIS: ascolto di", secondi, "secondi - navi ferme nei moli (ultime %.1f ore)" % (finestra.total_seconds() / 3600), n_rif,
+            "- sentite in questo giro", n_sentite, "- ricezione",
             "buona" if ricezione_ok else "scarsa (la regola dell'assenza non scatta)")
         aggiorna_presenze(dati, banchine, adesso, sentite, ricezione_ok)
         dati["ais"] = bool(pos)

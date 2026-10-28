@@ -500,6 +500,136 @@ class QualitaDellaRicezione(unittest.TestCase):
         self.assertEqual(A.qualita_ricezione(in_moto, {"1", "2"}, self.t0)[1], 0)                          # in moto o fuori dai moli
 
 
+class GiriDellaNotte(unittest.TestCase):
+    """Di notte i giri sono tre (23, 3, 6) e distanti ore. La ricezione si giudica guardando indietro fino
+    al giro prima, e si ascolta di piu'. Con la finestra di 2 ore la ricezione sarebbe sembrata sempre
+    perfetta (le navi non sentite, piu' vecchie di 2 ore, non contavano) e ogni nave non sentita sarebbe
+    passata a 'segnale perso' al primo calo di copertura."""
+    MMSI = "247000009"
+    t0 = quando("2026-10-28", "03:05")
+
+    def test_la_finestra_di_giorno_resta_di_due_ore(self):
+        from datetime import timedelta
+        self.assertEqual(A.finestra_ricezione({}, self.t0), timedelta(hours=2))                       # primo giro in assoluto
+        self.assertEqual(A.finestra_ricezione({"aggiornato": "non una data"}, self.t0), timedelta(hours=2))
+        for minuti in (15, 30, 70):
+            d = {"aggiornato": (self.t0 - timedelta(minutes=minuti)).isoformat()}
+            self.assertEqual(A.finestra_ricezione(d, self.t0), timedelta(hours=2), minuti)
+
+    def test_la_finestra_di_notte_arriva_al_giro_prima_e_non_oltre_otto_ore(self):
+        from datetime import timedelta
+        d = {"aggiornato": (self.t0 - timedelta(hours=4)).isoformat()}
+        self.assertEqual(A.finestra_ricezione(d, self.t0), timedelta(hours=4, minutes=45))
+        d = {"aggiornato": (self.t0 - timedelta(hours=20)).isoformat()}
+        self.assertEqual(A.finestra_ricezione(d, self.t0), timedelta(hours=8))
+
+    def test_di_notte_le_navi_non_sentite_pesano_sulla_ricezione(self):
+        from datetime import timedelta
+        # 5 navi sentite adesso e 5 sentite 4 ore fa (giro delle 23) e questa volta no
+        reg = {str(300 + i): posizione(self.t0, minuti_fa=0 if i < 5 else 240) for i in range(10)}
+        d = {"registro": reg, "aggiornato": (self.t0 - timedelta(hours=3, minutes=40)).isoformat()}
+        sentite = {str(300 + i) for i in range(5)}
+        self.assertEqual(A.qualita_ricezione(d, sentite, self.t0), (True, 5, 5))        # finestra di 2 ore: sembrava perfetta (sbagliato)
+        f = A.finestra_ricezione(d, self.t0)
+        self.assertEqual(A.qualita_ricezione(d, sentite, self.t0, f), (False, 10, 5))   # con la finestra giusta: 5 su 10, scarsa
+        sentite = {str(300 + i) for i in range(8)}
+        for i in range(5, 8):
+            reg[str(300 + i)] = posizione(self.t0, 0)                                  # tre delle altre cinque si sentono adesso
+        self.assertEqual(A.qualita_ricezione(d, sentite, self.t0, f), (True, 10, 8))
+
+    def test_due_giri_di_notte_di_assenza_fanno_segnale_perso(self):
+        from datetime import timedelta
+        n = {"nome": "SIGMA", "imo": "", "mmsi": self.MMSI, "tipo": "CONT.", "fonti": ["giornale"], "giorno": "2026-10-27",
+             "visto_banchina": (self.t0 - timedelta(hours=4)).isoformat(),
+             "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente", "in_rada": False}}
+        d = {"navi": [n], "escluse": [], "statici": {self.MMSI: {"imo": "9074729", "nome": "SIGMA", "tipo": 70, "lung": 200}},
+             "registro": {self.MMSI: posizione(self.t0, minuti_fa=240)}}              # ultimo segnale alle 23:05
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0, {"999"}, True)                  # giro delle 3: sentite le altre, lei no
+        A.pulizia(d, self.t0)
+        self.assertEqual(d["navi"][0]["assenze_ais"], 1)
+        self.assertTrue(d["navi"][0]["ais"]["ormeggiata"])                              # segnale di 4 ore fa: ancora valido
+        t6 = self.t0 + timedelta(hours=3)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, t6, {"999"}, True)                       # giro delle 6
+        A.pulizia(d, t6)
+        self.assertEqual(d["navi"][0]["assenze_ais"], 2)
+        self.assertTrue(d["navi"][0]["segnale_perso"])
+
+    def test_ascolto_piu_lungo_di_notte(self):
+        from datetime import datetime
+        salvato = os.environ.pop("AIS_SECONDI", None)
+        try:
+            def sec(h, m=0):
+                return A.secondi_ascolto(datetime(2026, 10, 28, h, m, tzinfo=ROMA))
+            for h, m in ((23, 5), (3, 5), (6, 5), (6, 59), (22, 30), (0, 0)):
+                self.assertEqual(sec(h, m), A.ASCOLTO_NOTTE, (h, m))
+            self.assertEqual(sec(7, 5), 720)                                            # primo giro del mattino
+            for h, m in ((7, 30), (7, 45), (12, 0), (20, 59), (21, 0), (21, 4)):
+                self.assertEqual(sec(h, m), 600, (h, m))
+            os.environ["AIS_SECONDI"] = "30"
+            self.assertEqual(sec(3, 5), 30)                                             # la variabile d'ambiente vince
+        finally:
+            os.environ.pop("AIS_SECONDI", None)
+            if salvato is not None:
+                os.environ["AIS_SECONDI"] = salvato
+
+
+class OrarioDeiGiri(unittest.TestCase):
+    """strumenti/orario_giro.sh: di giorno il ciclo da 15 minuti, di notte un giro alle 23, alle 3 e alle 6,
+    anche se GitHub ritarda o salta l'esecuzione prevista."""
+    SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orario_giro.sh")
+
+    def decidi(self, giorno, ora, ultimo=None, evento="schedule"):
+        """ultimo: 'AAAA-MM-GG HH:MM' dell'ultimo aggiornamento dei dati (ora di Genova), o None se non si sa"""
+        import subprocess
+        def epoca(g, o):
+            return str(int(quando(g, o).timestamp()))
+        env = dict(os.environ, EVENTO=evento, ADESSO_PROVA=epoca(giorno, ora))
+        env.pop("ULTIMO_PROVA", None)
+        env["ULTIMO_PROVA"] = epoca(*ultimo.split()) if ultimo else ""
+        r = subprocess.run(["bash", self.SCRIPT], capture_output=True, text=True, env=env, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return dict(riga.split("=") for riga in r.stdout.split())
+
+    def test_di_giorno_ciclo_da_quindici_minuti(self):
+        for ora in ("07:05", "12:35", "20:05", "20:55"):
+            self.assertEqual(self.decidi("2026-10-28", ora, "2026-10-28 06:20"), {"vai": "si", "un_giro": "no"}, ora)
+
+    def test_la_sera_dopo_le_21_non_si_fa_niente(self):
+        for ora in ("21:05", "22:05"):
+            self.assertEqual(self.decidi("2026-10-28", ora, "2026-10-28 21:00")["vai"], "no", ora)
+
+    def test_un_giro_alle_23_alle_3_alle_6(self):
+        un_giro = {"vai": "si", "un_giro": "si"}
+        self.assertEqual(self.decidi("2026-10-28", "23:05", "2026-10-28 21:00"), un_giro)
+        self.assertEqual(self.decidi("2026-10-29", "03:05", "2026-10-28 23:25"), un_giro)
+        self.assertEqual(self.decidi("2026-10-29", "06:05", "2026-10-29 03:25"), un_giro)
+
+    def test_una_volta_fatto_il_giro_non_si_rifa(self):
+        for g, o, ultimo in (("2026-10-28", "23:35", "2026-10-28 23:25"), ("2026-10-29", "00:05", "2026-10-28 23:25"),
+                             ("2026-10-29", "02:05", "2026-10-28 23:25"), ("2026-10-29", "04:05", "2026-10-29 03:25"),
+                             ("2026-10-29", "05:05", "2026-10-29 03:25"), ("2026-10-29", "06:35", "2026-10-29 06:20")):
+            self.assertEqual(self.decidi(g, o, ultimo)["vai"], "no", (g, o))
+
+    def test_se_github_ritarda_o_salta_il_giro_si_recupera_all_ora_dopo(self):
+        self.assertEqual(self.decidi("2026-10-29", "04:05", "2026-10-28 23:25")["vai"], "si")     # il giro delle 3 e' saltato
+        self.assertEqual(self.decidi("2026-10-29", "05:05", "2026-10-28 23:25")["vai"], "si")
+        self.assertEqual(self.decidi("2026-10-29", "00:05", "2026-10-28 21:00")["vai"], "si")     # saltato quello delle 23
+        self.assertEqual(self.decidi("2026-10-29", "06:50", "2026-10-29 03:25")["vai"], "si")     # arrivato tardi
+
+    def test_senza_storia_si_fa_il_giro(self):
+        self.assertEqual(self.decidi("2026-10-29", "01:05", None), {"vai": "si", "un_giro": "si"})
+
+    def test_avvio_a_mano(self):
+        self.assertEqual(self.decidi("2026-10-28", "14:00", "2026-10-28 13:55", "workflow_dispatch"), {"vai": "si", "un_giro": "no"})
+        self.assertEqual(self.decidi("2026-10-29", "02:00", "2026-10-29 01:55", "workflow_dispatch"), {"vai": "si", "un_giro": "si"})
+
+    def test_il_cambio_dell_ora_legale_non_confonde(self):
+        # notte del 25/10/2026: le 3 vengono due volte. Il giro delle 3 si fa, quello delle 6 pure.
+        self.assertEqual(self.decidi("2026-10-25", "04:05", "2026-10-24 23:25")["vai"], "si")
+        self.assertEqual(self.decidi("2026-10-25", "06:05", "2026-10-25 03:40")["vai"], "si")
+        self.assertEqual(self.decidi("2026-10-25", "05:05", "2026-10-25 03:40")["vai"], "no")
+
+
 class DiagnosiDelGiro(unittest.TestCase):
     t0 = quando("2026-10-27", "10:00")
 

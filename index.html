@@ -278,6 +278,7 @@
   .pill-navi{position:absolute;left:max(10px, env(safe-area-inset-left,0px));top:10px;z-index:2;
     background:rgba(253,253,241,.96);border:1px solid var(--linea);border-radius:999px;padding:7px 12px 7px 10px;
     font-size:13px;font-weight:700;color:#2E4A69;box-shadow:var(--ombra);display:flex;align-items:center;gap:7px;cursor:pointer}
+  .pill-navi.vecchio{border-color:rgba(236,94,39,.55);color:var(--arancio-scuro);max-width:calc(100% - 20px);text-align:left}
   .card .navi-riga{margin:2px 0 0;font-size:12.5px;font-weight:600;color:#3B5F86;display:flex;align-items:center;gap:5px}
 
   /* ---------- Pannello previsioni navi ---------- */
@@ -1860,6 +1861,29 @@ window.avviaApp = function(){
   });
   document.getElementById("pillNavi").addEventListener("click", function(){ impostaTab("navi"); });
 
+  /* ---------- quanto sono vecchi i dati ----------
+     Di giorno il file si aggiorna ogni 15 minuti, di notte tre volte (23, 3, 6). Se l'ultimo aggiornamento
+     e' piu' vecchio di 45 minuti lo si dice, con il giorno: "aggiornato alle 21:03" aperto alle 6 del mattino
+     sembrerebbe un dato fresco, invece le navi partite di notte risultano ancora in banchina. */
+  var DATI_VECCHI_MIN = 45;
+  function etaDati(){
+    var a = NAVI && NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
+    return a && !isNaN(a) ? Math.max(0, Math.round((Date.now() - a.getTime()) / 60000)) : null;
+  }
+  function datiVecchi(){ var e = etaDati(); return e !== null && e > DATI_VECCHI_MIN; }
+  function testoEta(min){
+    if(min < 60) return min + " min";
+    var h = Math.floor(min / 60), m = min % 60;
+    if(h >= 10 || !m) return h + (h === 1 ? " ora" : " ore");
+    return h + " h " + m + " min";
+  }
+  /* "alle 21:03", "ieri alle 21:03", "il 26/10 alle 21:03" */
+  function quandoDato(d){
+    if(!d || isNaN(d)) return "";
+    var g = giorniDa(oggiDi(d)), t = "alle " + hhmm(d.getHours() * 60 + d.getMinutes());
+    return g === 0 ? t : (g === -1 ? "ieri " + t : "il " + d.getDate() + "/" + (d.getMonth() + 1) + " " + t);
+  }
+
   /* ---------- pannello delle previsioni ---------- */
   function aggiornaNavi(){
     var V = oraVisita();
@@ -1883,7 +1907,10 @@ window.avviaApp = function(){
     });
     var pill = document.getElementById("pillNavi");
     pill.hidden = !NAVI;
-    pill.innerHTML = ICONA_NAVE + "<span>" + tot + (tot === 1 ? " nave da visitare" : " navi da visitare") + " alle " + hhmm(V) + "</span>";
+    var vecchi = datiVecchi();
+    pill.classList.toggle("vecchio", vecchi);
+    pill.innerHTML = ICONA_NAVE + "<span>" + tot + (tot === 1 ? " nave da visitare" : " navi da visitare") + " alle " + hhmm(V) +
+                     (vecchi ? " · dati di " + testoEta(etaDati()) + " fa" : "") + "</span>";
     aggiornaConteggioOggi(V);
     if(tab === "navi" || tab === "oggi") disegnaPannello(V);
     if(schedaNave !== null && scheda.classList.contains("on") && document.getElementById("btChiudi")){
@@ -1905,8 +1932,11 @@ window.avviaApp = function(){
       h += '<div class="nota attenzione" style="margin:0 0 10px">Il giornale è del <b>' + esc(giornoEsteso(NAVI.data)) +
            '</b>: quello di oggi non è ancora arrivato. Gli orari valgono per quel giorno.</div>';
     var agg = NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
+    if(datiVecchi())
+      h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Dati non aggiornati da ' + testoEta(etaDati()) + '.</b> Ultimo aggiornamento ' +
+           esc(quandoDato(agg)) + '. Le navi possono essere già partite o arrivate: controlla su VesselFinder.</div>';
     h += '<p class="pn-info">Giornale del <b>' + esc(giornoEsteso(NAVI.data)) + '</b>' +
-         (agg && !isNaN(agg) ? ' · aggiornato alle ' + hhmm(agg.getHours() * 60 + agg.getMinutes()) : '') +
+         (agg && !isNaN(agg) ? ' · aggiornato ' + esc(quandoDato(agg)) : '') +
          ' · posizioni AIS ' + (NAVI.ais ? 'attive' : 'non ancora attive') + '</p>';
 
     // scheda "Navi di oggi": solo le navi con la stella; quelle scelte restano qui anche se il molo non e' piu' agibile

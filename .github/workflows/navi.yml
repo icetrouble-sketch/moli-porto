@@ -1,11 +1,15 @@
 # Aggiorna le navi del giorno (giornale della Capitaneria + posizioni AIS)
-# ogni 15 minuti dalle 7 alle 21, ora di Genova. Le navi vengono salvate
-# solo cifrate (navi.enc.json) con il codice della mappa.
+# ogni 15 minuti dalle 7 alle 21, ora di Genova, e con un solo giro alle 23,
+# alle 3 e alle 6 (ascolto AIS piu' lungo). Le navi vengono salvate solo
+# cifrate (navi.enc.json) con il codice della mappa.
 #
 # GitHub fa partire le esecuzioni programmate in modo irregolare (a volte
-# poche al giorno). Per questo ogni esecuzione resta accesa e fa da sola un
-# giro ogni 15 minuti, fino alle 21 (al massimo 5 ore e mezza). Le partenze
-# programmate ogni ora servono solo a riaccenderla se si e' fermata.
+# poche al giorno). Per questo di giorno ogni esecuzione resta accesa e fa da
+# sola un giro ogni 15 minuti, fino alle 21 (al massimo 5 ore e mezza). Le
+# partenze programmate ogni ora servono solo a riaccenderla se si e' fermata.
+# Di notte la partenza oraria controlla se il giro previsto (23, 3 o 6) e' gia'
+# stato fatto e, se no, lo fa: cosi' un'esecuzione saltata o in ritardo si
+# recupera all'ora dopo. La decisione e' in strumenti/orario_giro.sh.
 #
 # Ogni giro riscrive il file delle navi. Per non riempire il deposito di
 # versioni quasi uguali (56 al giorno), il commit fatto da questa stessa
@@ -34,18 +38,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 345
     steps:
-      - name: Solo dalle 7 alle 21 (ora di Genova)
-        id: orario
-        run: |
-          ORA=$(TZ=Europe/Rome date +%-H)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$ORA" -ge 7 ] && [ "$ORA" -le 20 ]; }; then
-            echo "vai=si" >> "$GITHUB_OUTPUT"
-          else
-            echo "Fuori orario ($ORA)"; echo "vai=no" >> "$GITHUB_OUTPUT"
-          fi
-
+      # gli ultimi 30 commit: servono a sapere quando i dati sono stati aggiornati l'ultima volta
       - uses: actions/checkout@v4
-        if: steps.orario.outputs.vai == 'si'
+        with:
+          fetch-depth: 30
+
+      - name: Che cosa fare adesso (ora di Genova)
+        id: orario
+        env:
+          EVENTO: ${{ github.event_name }}
+        run: bash strumenti/orario_giro.sh >> "$GITHUB_OUTPUT"
 
       - name: Programmi per leggere il giornale
         if: steps.orario.outputs.vai == 'si'
@@ -54,11 +56,12 @@ jobs:
           sudo apt-get install -y -qq tesseract-ocr poppler-utils > /dev/null
           pip install -q -r strumenti/requisiti.txt
 
-      - name: Giri ogni 15 minuti fino alle 21
+      - name: Giri (ogni 15 minuti dalle 7 alle 21, uno solo di notte)
         if: steps.orario.outputs.vai == 'si'
         env:
           CODICE_MAPPA: ${{ secrets.CODICE_MAPPA }}
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
+          UN_GIRO: ${{ steps.orario.outputs.un_giro }}
         run: |
           git config user.name "aggiornamento-navi"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -99,6 +102,7 @@ jobs:
             python3 strumenti/aggiorna_navi.py $OPZ || echo "giro non riuscito, si riprova al prossimo"
             OPZ=""
             pubblica
+            if [ "$UN_GIRO" = "si" ]; then echo "Giro notturno fatto"; break; fi
             PROSSIMO=$((GIRO + 900))
             if [ "$PROSSIMO" -ge "$FINE" ]; then echo "Fine dei giri"; break; fi
             ATTESA=$((PROSSIMO - $(date +%s))); [ "$ATTESA" -gt 0 ] && sleep "$ATTESA"
