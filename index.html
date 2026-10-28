@@ -239,12 +239,15 @@
     width:max-content;max-width:calc(100% - 32px)}
   #toast button{background:transparent;border:none;color:#FFB08F;font-weight:700;font-size:14.5px;padding:6px 8px;cursor:pointer}
 
-  /* ---------- Schede in alto: Mappe / Previsioni navi ---------- */
+  /* ---------- Schede in alto: Mappe / Previsioni navi / Navi di oggi ---------- */
   .tabs{display:flex;margin-top:10px;background:#EFEBDD;border-radius:12px;padding:3px;gap:3px}
-  .tab{flex:1;padding:8px 6px;border:none;border-radius:9px;background:transparent;font-size:14.5px;font-weight:700;
-    color:var(--grigio);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+  .tab{flex:1 1 auto;min-width:0;padding:8px 6px;border:none;border-radius:9px;background:transparent;font-size:13.5px;font-weight:700;
+    color:var(--grigio);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap}
   .tab.on{background:#fff;color:var(--inchiostro);box-shadow:0 1px 4px rgba(42,36,31,.12)}
   .tab .punto{width:7px;height:7px;border-radius:50%;background:var(--arancio)}
+  @media (max-width:340px){ .tab{font-size:12.5px;padding:8px 3px;gap:4px} }
+  .tab .conta{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--arancio);color:var(--latte);
+    font-size:11.5px;font-weight:800;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
   .orario{display:flex;align-items:center;gap:8px;margin-top:10px}
   .orario label{font-size:14px;font-weight:600;color:var(--inchiostro);white-space:nowrap}
   .orario input{flex:1;min-width:0;font:inherit;font-size:16px;font-weight:700;padding:7px 10px;border-radius:11px;
@@ -267,6 +270,7 @@
   .et-nave text{font-size:10.5px;font-weight:700;fill:#2E4A69;text-anchor:middle;dominant-baseline:central}
   .et-nave.nv rect{stroke:#8B857A;fill:rgba(244,242,236,.95)}
   .et-nave.nv text{fill:#6F6A61;font-weight:600}
+  .et-nave.scelta rect{stroke:#D9A000;stroke-width:2;fill:#FFF9E2}
   .lontano .et-nave{display:none}
   .leg-nave{width:16px;height:7px;border-radius:2px 5px 5px 2px;background:#3B5F86}
   .legenda small{font-size:12px}
@@ -290,7 +294,20 @@
   .gruppo h3 .n{font-size:12.5px;color:var(--grigio);font-weight:600}
   .nv{background:#fff;border:1.5px solid var(--linea);border-radius:15px;padding:11px 12px;margin:0 0 8px;box-shadow:var(--ombra)}
   .nv .su{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .nv .su h4{flex:1;min-width:0}
   .nv h4{margin:0;font-size:15.5px;letter-spacing:-.1px;overflow-wrap:anywhere}
+  .stella{flex:none;width:36px;height:36px;margin:-7px -8px -7px -2px;padding:0;border:none;background:transparent;border-radius:50%;
+    color:#9A9388;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .stella.on{color:#D9A000}
+  .stella svg{display:block}
+  .nv.scelta{border-color:#E8C85C}
+  .b-oggi{background:#fff;color:#8A6500;border:1.5px solid #E3C766;display:flex;align-items:center;justify-content:center;gap:7px}
+  .b-oggi.on{background:#FFF6D6;border-color:#D9A000}
+  .oggi-vuoto{background:#fff;border:1.5px dashed var(--linea);border-radius:15px;padding:22px 18px;text-align:center;color:var(--grigio);margin:0 0 14px}
+  .oggi-vuoto svg{color:#D9A000;margin-bottom:6px}
+  .oggi-vuoto p{margin:0 0 8px;font-size:13.5px;line-height:1.45}
+  .oggi-vuoto b{color:var(--inchiostro);font-size:15px}
+  .oggi-vuoto .bottone{margin-top:6px}
   .nv .det{margin:2px 0 0;font-size:12.5px;color:var(--grigio)}
   .nv .orari{margin:7px 0 0;font-size:13.5px;font-variant-numeric:tabular-nums;display:flex;gap:14px;flex-wrap:wrap}
   .nv .orari span{color:var(--grigio)}
@@ -303,6 +320,7 @@
   .stato-n.rischio{background:rgba(236,94,39,.13);color:var(--arancio-scuro)}
   .stato-n.prevista,.stato-n.partita,.stato-n.uscita,.stato-n.nv{background:#ECE9E1;color:#6F6A61}
   .stato-n.rada,.stato-n.avvicina{background:#E6EEF6;color:#3B5F86}
+  .stato-n.scelta-leg{background:#FFF6D6;color:#8A6500}
   .nv.spenta{box-shadow:none;background:#FAF9F5}
   .nv.spenta h4{color:#6F6A61}
   .nv .ais-riga{margin:5px 0 0;font-size:12.5px;color:#3B5F86;font-weight:600}
@@ -355,6 +373,7 @@
   <div class="tabs" role="tablist" aria-label="Sezioni">
     <button class="tab on" role="tab" aria-selected="true" data-tab="mappe">Mappe</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="navi">Previsioni navi</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="oggi">Navi di oggi<span class="conta" id="contaOggi" hidden></span></button>
   </div>
   <div class="filtri" id="filtri" role="group" aria-label="Filtra i terminal">
     <button class="chip on" data-f="tutti">Tutti<span class="n" id="nTutti"></span></button>
@@ -1041,7 +1060,7 @@ window.avviaApp = function(){
       lista.push({ el: vv[j], prio: vv[j].classList.contains("princ") ? 5e3 : 10, varco: true });
     }
     var nn = gEtichette.querySelectorAll(".et-nave");
-    for(var q = 0; q < nn.length; q++) lista.push({ el: nn[q], prio: nn[q].classList.contains("nv") ? 40 : 60 });
+    for(var q = 0; q < nn.length; q++) lista.push({ el: nn[q], prio: nn[q].classList.contains("scelta") ? 80 : (nn[q].classList.contains("nv") ? 40 : 60) });
     lista.sort(function(a, b){ return b.prio - a.prio; });
     var presi = [];
     lista.forEach(function(o){
@@ -1785,13 +1804,14 @@ window.avviaApp = function(){
     var d = tr.d, a = tr.acqua;
     var pts = loc.map(function(q){ return (c0.x + d.x * q[0] + a.x * q[1]).toFixed(1) + " " + (c0.y + d.y * q[0] + a.y * q[1]).toFixed(1); });
     var g = tag("g", { "class": "nave " + o.st.c + (visitata(o.n) ? " visitata" : ""), "data-i": o.n._i });
+    var segnata = o.st.c !== "nv" && !!chiaveScelta(o.n);                 // con la stella: "visito oggi"
     g.appendChild(tag("path", { d: "M" + pts.join(" L") + " Z" }));
     gNavi.appendChild(g);
     // nome della nave, a dimensione fissa sullo schermo
     var cx = c0.x + d.x * L / 2 + a.x * (W / 2 + 14), cy = c0.y + d.y * L / 2 + a.y * (W / 2 + 14);
-    var e = tag("g", { "class": "et-nave " + o.st.c, "data-x": cx, "data-y": cy });
+    var e = tag("g", { "class": "et-nave " + o.st.c + (segnata ? " scelta" : ""), "data-x": cx, "data-y": cy });
     var r = tag("rect", { rx: 6, ry: 6 }), t = tag("text", {});
-    var etichetta = o.st.c === "nv" ? o.n.nome + " · da non visitare" : o.n.nome;
+    var etichetta = o.st.c === "nv" ? o.n.nome + " · da non visitare" : (segnata ? "★ " : "") + o.n.nome;
     t.textContent = etichetta;
     e.appendChild(r); e.appendChild(t);
     gEtichette.appendChild(e);
@@ -1808,7 +1828,7 @@ window.avviaApp = function(){
       var on = b.getAttribute("data-tab") === t;
       b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false");
     });
-    var navi = t === "navi";
+    var navi = t === "navi" || t === "oggi";           // le due schede con l'elenco delle navi
     document.getElementById("filtri").hidden = navi;
     document.getElementById("orario").hidden = !navi;
     document.getElementById("pannelloNavi").hidden = !navi;
@@ -1864,7 +1884,8 @@ window.avviaApp = function(){
     var pill = document.getElementById("pillNavi");
     pill.hidden = !NAVI;
     pill.innerHTML = ICONA_NAVE + "<span>" + tot + (tot === 1 ? " nave da visitare" : " navi da visitare") + " alle " + hhmm(V) + "</span>";
-    if(tab === "navi") disegnaPannello(V);
+    aggiornaConteggioOggi(V);
+    if(tab === "navi" || tab === "oggi") disegnaPannello(V);
     if(schedaNave !== null && scheda.classList.contains("on") && document.getElementById("btChiudi")){
       var sc = scheda.scrollTop; apriNave(schedaNave); scheda.scrollTop = sc;
     }
@@ -1888,16 +1909,36 @@ window.avviaApp = function(){
          (agg && !isNaN(agg) ? ' · aggiornato alle ' + hhmm(agg.getHours() * 60 + agg.getMinutes()) : '') +
          ' · posizioni AIS ' + (NAVI.ais ? 'attive' : 'non ancora attive') + '</p>';
 
+    // scheda "Navi di oggi": solo le navi con la stella; quelle scelte restano qui anche se il molo non e' piu' agibile
+    var soloOggi = tab === "oggi";
+    var scelte = Object.keys(sceltaAggiornata().navi);
+    if(soloOggi && !scelte.length){
+      h += '<div class="oggi-vuoto">' + ICONA_STELLA(false, 30) +
+           '<p><b>Nessuna nave scelta per oggi</b></p>' +
+           '<p>In «Previsioni navi» tocca la stella accanto alla nave che vuoi visitare: la ritrovi qui, con orario e stato sempre aggiornati.</p>' +
+           '<p>La scelta si azzera da sola a mezzanotte.</p>' +
+           '<button type="button" class="bottone b-secondario" data-vai="navi">Vai alle previsioni</button></div>';
+      el.innerHTML = h;
+      collegaStelle(el);
+      return;
+    }
+
     var conti = { ok: 0, rischio: 0, avvicina: 0, prevista: 0, fatte: 0 };
-    var gruppi = {};
+    var gruppi = {}, trovate = {};
     NAVI.navi.forEach(function(n){
+      if(soloOggi){
+        var q = chiaveScelta(n);
+        if(!q) return;
+        trovate[q] = true;
+      }
       var t = trova(n.dove.terminal);
-      if(!t || !agibile(t)) return;
+      if(!t || (!soloOggi && !agibile(t))) return;
       var st = statoNave(n, V);
       if(visitata(n)) conti.fatte++;
       else if(conti[st.c] !== undefined) conti[st.c]++;
       (gruppi[t.id] = gruppi[t.id] || []).push({ n: n, st: st });
     });
+    if(soloOggi) h += '<p class="pn-info">Le navi che hai scelto per oggi, con lo stato all\'orario della visita. La scelta si azzera a mezzanotte.</p>';
     h += '<div class="riepilogo">' +
          '<div><b>' + conti.ok + '</b><span>In tempo</span></div>' +
          '<div><b>' + conti.rischio + '</b><span>A rischio</span></div>' +
@@ -1907,9 +1948,9 @@ window.avviaApp = function(){
     var ordine = { ok: 0, rischio: 1, avvicina: 2, prevista: 3, rada: 4, uscita: 5, nv: 6, partita: 7 };
     var senza = [];
     tutti.forEach(function(t){
-      if(!agibile(t)) return;
+      if(!soloOggi && !agibile(t)) return;
       var g = gruppi[t.id];
-      if(!g){ senza.push(t.nome); return; }
+      if(!g){ if(!soloOggi) senza.push(t.nome); return; }
       g.sort(function(a, b){ return (visitata(a.n) - visitata(b.n)) || (ordine[a.st.c] - ordine[b.st.c]); });
       var utili = g.filter(function(o){ return (o.st.c === "ok" || o.st.c === "rischio") && !visitata(o.n); }).length;
       h += '<section class="gruppo"><h3><span class="pastiglia" style="background:' + t.colore + '"></span>' + esc(t.nome) +
@@ -1918,7 +1959,20 @@ window.avviaApp = function(){
       h += '</section>';
     });
     if(senza.length) h += '<p class="nessuna">Nessuna nave prevista: ' + esc(senza.join(", ")) + '.</p>';
+    if(soloOggi){
+      // scelte che l'elenco di adesso non contiene piu' (probabilmente partite): restano visibili finche' non si tolgono
+      scelte.forEach(function(q){
+        if(trovate[q]) return;
+        var e = sceltaAggiornata().navi[q];
+        h += '<div class="nv spenta"><div class="su"><h4>' + esc(e.nome) + '</h4><span class="stato-n partita">Non più nell\'elenco</span></div>' +
+             '<p class="perche">Non compare più nelle previsioni: forse è partita o l\'AIS non la vede più. Controlla su VesselFinder.</p>' +
+             '<div class="bottoni"><button type="button" class="bottone b-secondario" data-togli="' + esc(q) + '">Togli dalla lista</button>' +
+             '<a class="bottone b-nave" target="_blank" rel="noopener" href="' + linkVF(e) + '">Vedi su VesselFinder</a></div></div>';
+      });
+      h += '<button type="button" class="bottone b-secondario" style="width:100%;margin:2px 0 14px" data-svuota="1">Togli tutte le navi di oggi</button>';
+    }
     h += '<div class="legenda-stati">' +
+         '<div><span class="stato-n scelta-leg">★ Stella</span>tocca la stella per segnare le navi che visiti oggi: le ritrovi nella scheda «Navi di oggi»</div>' +
          '<div><span class="stato-n ok">In tempo</span>l\'AIS la vede ferma in banchina e ci resta fino all\'orario della visita</div>' +
          '<div><span class="stato-n rischio">A rischio</span>ferma in banchina, ma parte vicino all\'orario della visita o l\'orario non è preciso</div>' +
          '<div><span class="stato-n avvicina">In avvicinamento</span>l\'AIS la vede arrivare: non è ancora in banchina, non è sulla mappa né nel conteggio</div>' +
@@ -1936,6 +1990,7 @@ window.avviaApp = function(){
       b.addEventListener("click", function(){ mostraSullaMappa(Number(b.getAttribute("data-mappa"))); });
     });
     collegaBottoniVisita(el);
+    collegaStelle(el);
     var nm = document.getElementById("nomeVisite");
     if(nm){
       nm.value = leggi(CH_NOME, "") || "";
@@ -1949,8 +2004,9 @@ window.avviaApp = function(){
     var spenta = st.c === "partita" || st.c === "prevista" || st.c === "rada" || st.c === "uscita" || nonVisita || fatta;
     var a = oraN(n, "arrivo"), p = oraN(n, "partenza");
     var sullaMappa = (st.c === "ok" || st.c === "rischio" || nonVisita) && trattoDi(n);
-    return '<div class="nv' + (spenta ? " spenta" : "") + (fatta ? " fatta" : "") + '">' +
-      '<div class="su"><h4>' + esc(n.nome) + '</h4><span class="stato-n ' + st.c + '">' + st.t + '</span></div>' +
+    return '<div class="nv' + (spenta ? " spenta" : "") + (fatta ? " fatta" : "") + (!nonVisita && chiaveScelta(n) ? " scelta" : "") + '">' +
+      '<div class="su"><h4>' + esc(n.nome) + '</h4><span class="stato-n ' + st.c + '">' + st.t + '</span>' +
+      (nonVisita ? '' : bottoneStella(n)) + '</div>' +
       '<p class="det">' + esc(TIPI[n.tipo] || n.tipo || "") + (n.loa ? ' · ' + Math.round(n.loa) + ' m' : '') + ' · ' + esc(n.accosto) + '</p>' +
       '<p class="orari">' + (a ? '<span>Arrivo <b>' + breve(a) + '</b></span>' :
                              '<span>' + (n.in_porto_dal && n.in_porto_dal < oggi() ? 'In porto dal <b>' + dataBreve(n.in_porto_dal) + '</b>' : 'Già in porto') + '</span>') +
@@ -2011,7 +2067,7 @@ window.avviaApp = function(){
       '<div class="nota' + (st.c === "ok" ? "" : " attenzione") + '"><span class="stato-n ' + st.c + '">' + st.t +
         '</span> alle ' + hhmm(V) + '. ' + esc(st.d) + '</div>' +
       (st.c === "nv" ? '' : rigaVisite(n)) + rigaArrivo(n) +
-      '<div class="azioni">' + (st.c === "nv" ? '' : bottoneVisita(n)) +
+      '<div class="azioni">' + (st.c === "nv" ? '' : bottoneVisita(n) + bottoneOggi(n)) +
         '<a class="bottone b-nave" target="_blank" rel="noopener" href="' + linkVF(n) + '">Vedi su VesselFinder</a>' +
         (t ? '<a class="bottone b-primario" target="_blank" rel="noopener" href="' + linkGPS(t) + '">' + ICONA_VAI + 'Come ci arrivo (' + esc(t.nome) + ')</a>' : '') +
       '</div>' +
@@ -2031,6 +2087,7 @@ window.avviaApp = function(){
     scheda.classList.add("on"); velo.classList.add("on"); scheda.scrollTop = 0;
     document.getElementById("btChiudi").addEventListener("click", function(){ chiudi(); });
     collegaBottoniVisita(scheda);
+    collegaStelle(scheda);
     schedaNave = i;
     preparaTrascinamento();
   }
@@ -2073,6 +2130,98 @@ window.avviaApp = function(){
     var v = valutaArrivo(n);
     return v ? '<p class="arrivo-riga ' + v.liv + '"><b>' + ({ sicuro: "Arrivo sicuro", ritardo: "Arrivo in dubbio", incerto: "Arrivo da confermare" })[v.liv] +
                ':</b> ' + esc(v.t) + '</p>' : '';
+  }
+
+  /* ================= NAVI DI OGGI (la stella) =================
+     Con la stella si sceglie, su questo telefono, le navi che si vogliono visitare oggi:
+     finiscono nella scheda "Navi di oggi" e sulla mappa hanno il nome in giallo.
+     La scelta vale per la data di oggi e si azzera da sola al cambio di giorno.
+     Si ricorda anche nome e IMO, cosi' una nave sparita dall'elenco resta visibile. */
+  var CH_OGGI = "porto_navi_oggi_v1";
+  var SCELTE = (function(){
+    var s = leggi(CH_OGGI, null);
+    return (s && s.giorno === oggi() && s.navi && typeof s.navi === "object") ? s : { giorno: oggi(), navi: {} };
+  })();
+  function sceltaAggiornata(){
+    if(SCELTE.giorno !== oggi()){ SCELTE = { giorno: oggi(), navi: {} }; scrivi(CH_OGGI, SCELTE); }
+    return SCELTE;
+  }
+  /* la chiave con cui la nave e' salvata, se e' stata scelta (anche se nel frattempo
+     le e' stato assegnato l'IMO). Due navi con IMO diversi non si confondono mai. */
+  function chiaveScelta(n){
+    var s = sceltaAggiornata(), k = chiaveNave(n.nome, n.imo);
+    if(s.navi[k]) return k;
+    var nome = chiaveNave(n.nome, ""), trovata = null;
+    Object.keys(s.navi).forEach(function(q){
+      var e = s.navi[q];
+      if(n.imo && e.imo && n.imo === e.imo) trovata = q;
+      else if((!n.imo || !e.imo) && chiaveNave(e.nome, "") === nome) trovata = q;
+    });
+    return trovata;
+  }
+  function impostaScelta(n, si){
+    var s = sceltaAggiornata(), q = chiaveScelta(n);
+    if(si){ if(!q) s.navi[chiaveNave(n.nome, n.imo)] = { nome: n.nome, imo: n.imo || "" }; }
+    else if(q) delete s.navi[q];
+    scrivi(CH_OGGI, s);
+    aggiornaNavi();
+  }
+  function aggiornaConteggioOggi(V){
+    var el = document.getElementById("contaOggi"), k = 0;
+    if(NAVI) NAVI.navi.forEach(function(n){
+      if(chiaveScelta(n) && !visitata(n) && statoNave(n, V).c !== "nv") k++;
+    });
+    el.hidden = !k; el.textContent = k;                    // quante restano da visitare
+  }
+  function ICONA_STELLA(piena, px){
+    return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="' + (piena ? "currentColor" : "none") +
+           '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+           '<path d="M12 2.8l2.8 5.9 6.4.9-4.7 4.5 1.2 6.4L12 17.3l-5.7 3.2 1.2-6.4L2.8 9.6l6.4-.9z"/></svg>';
+  }
+  /* stella in alto a destra sulla carta della nave */
+  function bottoneStella(n){
+    var on = !!chiaveScelta(n);
+    return '<button type="button" class="stella' + (on ? " on" : "") + '" data-stella="' + n._i + '" aria-pressed="' + on +
+           '" aria-label="' + (on ? "Togli dalle navi di oggi" : "Visito questa nave oggi") + '">' + ICONA_STELLA(on, 24) + '</button>';
+  }
+  /* pulsante con la scritta, nella scheda che si apre dalla mappa */
+  function bottoneOggi(n){
+    var on = !!chiaveScelta(n);
+    return '<button type="button" class="bottone b-oggi' + (on ? " on" : "") + '" data-stella="' + n._i + '" aria-pressed="' + on + '">' +
+           ICONA_STELLA(on, 18) + (on ? "Tra le navi di oggi · togli" : "La visito oggi") + '</button>';
+  }
+  function collegaStelle(el){
+    Array.prototype.forEach.call(el.querySelectorAll("[data-stella]"), function(b){
+      b.addEventListener("click", function(e){
+        e.stopPropagation();
+        var n = NAVI && NAVI.navi[Number(b.getAttribute("data-stella"))];
+        if(!n) return;
+        var era = !!chiaveScelta(n);
+        impostaScelta(n, !era);
+        if(era && tab === "oggi") avvisa(n.nome + " tolta dalle navi di oggi.", function(){ impostaScelta(n, true); });
+      });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll("[data-togli]"), function(b){
+      b.addEventListener("click", function(e){
+        e.stopPropagation();
+        var q = b.getAttribute("data-togli"), s = sceltaAggiornata(), voce = s.navi[q];
+        if(!voce) return;
+        delete s.navi[q]; scrivi(CH_OGGI, s); aggiornaNavi();
+        avvisa(voce.nome + " tolta dalle navi di oggi.", function(){ sceltaAggiornata().navi[q] = voce; scrivi(CH_OGGI, SCELTE); aggiornaNavi(); });
+      });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll("[data-svuota]"), function(b){
+      b.addEventListener("click", function(){
+        var s = sceltaAggiornata(), prima = JSON.parse(JSON.stringify(s.navi)), k = Object.keys(prima).length;
+        if(!k) return;
+        s.navi = {}; scrivi(CH_OGGI, s); aggiornaNavi();
+        avvisa(k === 1 ? "Tolta 1 nave dalla lista di oggi." : "Tolte " + k + " navi dalla lista di oggi.",
+               function(){ sceltaAggiornata().navi = prima; scrivi(CH_OGGI, SCELTE); aggiornaNavi(); });
+      });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll("[data-vai]"), function(b){
+      b.addEventListener("click", function(){ impostaTab(b.getAttribute("data-vai")); });
+    });
   }
 
   /* ================= VISITE (foglio Google condiviso) =================
@@ -2194,7 +2343,7 @@ window.avviaApp = function(){
     caricaNavi();
     inviaCoda(); caricaVisite();
     setInterval(function(){ if(document.visibilityState === "visible"){ inviaCoda(); caricaVisite(); } }, 5 * 60 * 1000);
-    // ogni 10 minuti si riprende il file (il server lo aggiorna ogni 30) e ogni minuto si ricalcola
+    // ogni 10 minuti si riprende il file (il server lo aggiorna ogni 15) e ogni minuto si ricalcola
     setInterval(function(){ if(document.visibilityState === "visible") caricaNavi(); }, 10 * 60 * 1000);
     setInterval(function(){ if(oraScelta === null) aggiornaNavi(); }, 60 * 1000);
     document.addEventListener("visibilitychange", function(){
