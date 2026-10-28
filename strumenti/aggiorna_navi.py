@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggiorna le navi del giorno per l'app (gira in GitHub Actions ogni 30 minuti).
+"""Aggiorna le navi del giorno per l'app (gira in GitHub Actions ogni 15 minuti).
 
 1. Apre le navi gia' pubblicate (navi.enc.json) con il codice della mappa.
 2. Se sul sito shipsinformationgenova.com c'e' un giornale della Capitaneria
@@ -27,6 +27,12 @@ IMBOCCATURA = (44.3985, 8.8960)
 MOLI_BOX = (44.3960, 44.4125, 8.8720, 8.9200)
 VALIDITA_POSIZIONE = timedelta(hours=3)     # quanto vale l'ultima posizione di una nave in movimento
 VALIDITA_FERMA = timedelta(hours=6)         # ... e di una nave ferma alla banchina
+# Regola dell'assenza. Una nave ferma trasmette ogni 3 minuti: se l'AIS sente le altre navi dei moli ma non lei
+# per due giri di fila, non e' piu' li' (o non la sentiamo piu'): da confermare, e se e' solo AIS esce dall'elenco.
+SEGNALE_RECENTE = timedelta(minutes=40)     # una nave solo-AIS entra nell'elenco solo con un segnale piu' fresco di cosi'
+ASSENZE_MAX = 2                             # giri di fila senza sentirla (con buona ricezione) prima di 'segnale perso'
+RICEZIONE_MIN = 5                           # navi sentite dentro i moli in un giro per dire che la ricezione e' buona
+SEGUITE = ("636092930",)                    # MMSI di cui ogni giro scrive la storia (diagnosi: CHENNAI EXPRESS)
 # zona in cui ascoltare l'AIS: Mar Ligure e dintorni
 AIS_BOX = [[42.00, 6.00], [44.60, 11.00]]   # da Marsiglia all'Elba: le navi in arrivo si vedono ore prima
 
@@ -624,10 +630,10 @@ def leggi_banchine(k):
     return json.loads(m.group(1)) if m else {}
 
 
-def alla_banchina(lat, lon, banchine):
-    """Se il punto e' a ridosso di una banchina dei nostri moli, dice quale:
-    (molo, lato, terminal, metri dalla radice lungo la banchina)."""
-    meglio = None
+def misura_banchine(lat, lon, banchine):
+    """Distanza del punto da ogni lato di banchina della mappa, dal piu' vicino: lista di
+    (d metri, verso, molo, lato, terminal, metri dalla radice). verso > 0: dalla parte dell'acqua."""
+    out = []
     for molo, b in banchine.items():
         for lato in ("ponente", "levante", "testata"):
             l = b.get(lato)
@@ -643,9 +649,22 @@ def alla_banchina(lat, lon, banchine):
             d = math.hypot(px - qx, py - qy)
             ac = (b.get("acqua") or {}).get(lato) or [0, 0]
             verso = (px - qx) * ac[1] + (py - qy) * ac[0]        # >0: lato acqua
-            if d < 75 and verso > -15 and (meglio is None or d < meglio[0]):
-                meglio = (d, molo, lato, b["terminal"], round(t * math.sqrt(L2)))
-    return None if meglio is None else {"molo": meglio[1], "lato": meglio[2], "terminal": meglio[3], "s_m": meglio[4]}
+            out.append((d, verso, molo, lato, b["terminal"], round(t * math.sqrt(L2))))
+    return sorted(out, key=lambda x: x[0])
+
+
+def alla_banchina(lat, lon, banchine):
+    """Se il punto e' a ridosso di una banchina dei nostri moli, dice quale:
+    (molo, lato, terminal, metri dalla radice lungo la banchina)."""
+    for d, verso, molo, lato, terminal, s_m in misura_banchine(lat, lon, banchine):
+        if d < 75 and verso > -15:
+            return {"molo": molo, "lato": lato, "terminal": terminal, "s_m": s_m}
+    return None
+
+
+def nei_moli(p):
+    """La posizione e' dentro l'area dei moli?"""
+    return MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]
 
 
 def chiave_nave(n):
@@ -667,6 +686,53 @@ def aggiorna_registro(dati, pos, statici, adesso):
     limite = adesso - timedelta(days=3)
     for mmsi in [m for m, p in reg.items() if datetime.fromisoformat(p["quando"]) < limite]:
         reg.pop(mmsi, None)
+    spente = dati.get("spente")
+    if spente:
+        for mmsi in [m for m in spente if m not in reg]:
+            spente.pop(mmsi, None)
+
+
+def limite_segnale(ricezione_ok):
+    """Quanto puo' essere vecchio l'ultimo segnale di una nave ferma per metterla in elenco.
+    Con buona ricezione (si sentono le altre navi dei moli) basta un segnale di meno di 40 minuti;
+    senza (o senza saperlo) non si puo' dire che sia sparita: vale il limite lungo di sempre."""
+    return SEGNALE_RECENTE if ricezione_ok else VALIDITA_FERMA
+
+
+def scarto_solo_ais(dati, mmsi, p, dove, adesso, ricezione_ok=None):
+    """Perche' una nave che l'AIS ha nel registro NON entra nell'elenco come 'solo AIS'.
+    Restituisce il motivo a parole, oppure None se entra. Usata sia per decidere sia per la
+    diagnosi nel riepilogo del giro, cosi' le due cose non possono dire cose diverse."""
+    s = (dati.get("statici") or {}).get(mmsi) or {}
+    if p["sog"] >= 2:
+        return "in movimento (%.1f nodi)" % p["sog"]
+    if p["sog"] >= 0.7:
+        return "velocita' %.1f nodi: tra 0,7 e 2 non conta come ferma" % p["sog"]
+    eta = adesso - datetime.fromisoformat(p["quando"])
+    if eta > limite_segnale(ricezione_ok):
+        return "ultimo segnale di %d minuti fa, troppo vecchio" % (eta.total_seconds() // 60)
+    spente = (dati.get("spente") or {}).get(mmsi)
+    if spente and p["quando"] <= spente:
+        return "tolta per assenza di segnale, nessun segnale nuovo"
+    if not dove:
+        return "non e' a ridosso di una banchina della mappa"
+    if not s:
+        return "dati statici (tipo, lunghezza) non ancora ricevuti"
+    tipo_a = tipo_ais(s.get("tipo"))
+    if not tipo_a:
+        return "tipo AIS %s: non e' carico, cisterna o passeggeri" % (s.get("tipo") or "assente")
+    minima = lunghezza_minima_ais(dove["terminal"], tipo_a)
+    if (s.get("lung") or 0) < minima:
+        return "lunga %s m, sotto il minimo di %s m" % (s.get("lung") or 0, minima)
+    if tipo_a == "PASS." or (ESCLUDI_CISTERNE and tipo_a == "TANK"):
+        return "passeggeri o cisterna: non si visitano"
+    nome = (s.get("nome") or p.get("nome") or "").upper()
+    if not nome:
+        return "senza nome"
+    imo = s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else ""
+    if e_esclusa(dati, imo, nome, mmsi):
+        return "nella lista delle escluse (chemical o ro-ro con passeggeri)"
+    return None
 
 
 def trova_mmsi(n, dati):
@@ -742,9 +808,11 @@ def riassunto_taratura(dati):
         log("taratura:", k, "->", ", ".join(f"{v} x{c}" for v, c in sorted(t.items(), key=lambda x: -x[1])))
 
 
-def aggiorna_presenze(dati, banchine, adesso):
+def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
     """Mette la posizione AIS sulle navi dell'elenco e aggiunge quelle che l'AIS
-    vede ferme alle nostre banchine anche se il giornale non le nomina."""
+    vede ferme alle nostre banchine anche se il giornale non le nomina.
+    sentite: gli MMSI sentiti in questo giro; ricezione_ok: in questo giro si sono sentite
+    abbastanza navi dei moli. Servono alla regola dell'assenza (senza, la regola non scatta)."""
     reg, sta = dati.get("registro", {}), dati.get("statici", {})
     oggi = adesso.astimezone(ROMA).date().isoformat()
     usati = set()
@@ -754,6 +822,13 @@ def aggiorna_presenze(dati, banchine, adesso):
         if not mmsi:
             continue
         n["mmsi"] = mmsi; usati.add(mmsi)
+        if sentite is not None:
+            if mmsi in sentite:
+                n["assenze_ais"] = 0
+            elif ricezione_ok and n.get("visto_banchina") and not n.get("uscita_vista"):
+                # era ferma alla nostra banchina, si sentono le altre navi e lei no: un giro di assenza
+                n["assenze_ais"] = (n.get("assenze_ais") or 0) + 1
+                log("assente all'AIS (con buona ricezione):", n["nome"], "giri di fila:", n["assenze_ais"])
         s = sta.get(mmsi, {})
         if s.get("nome") and len(s["nome"]) >= 3:
             n["nome"] = s["nome"].upper()                     # nome ufficiale dall'AIS
@@ -776,6 +851,8 @@ def aggiorna_presenze(dati, banchine, adesso):
         if dove:
             impara(dati, n.get("dove_giornale"), dove)
             a["ormeggiata"] = True; a["s_m"] = dove["s_m"]
+            if (n.get("assenze_ais") or 0) >= ASSENZE_MAX:
+                a["silenzio"] = True                              # l'app non la dice piu' 'in tempo'
             n["dove"] = {**n.get("dove", {}), "terminal": dove["terminal"], "molo": dove["molo"],
                          "lato": dove["lato"] if dove["lato"] != "testata" else None,
                          "punto": "testata" if dove["lato"] == "testata" else n.get("dove", {}).get("punto"),
@@ -811,24 +888,18 @@ def aggiorna_presenze(dati, banchine, adesso):
         if mmsi in usati or p["sog"] >= 0.7:
             continue
         quando = datetime.fromisoformat(p["quando"])
-        if adesso - quando > timedelta(hours=6):
+        if adesso - quando > limite_segnale(ricezione_ok):
             continue
         dove = alla_banchina(p["lat"], p["lon"], banchine)
         if not dove:
             continue
         s = sta.get(mmsi, {})
-        # solo navi vere (passeggeri, carico, cisterne, lunghe almeno 60 m): niente rimorchiatori e barche
-        # (le bettoline di rifornimento e i mezzi di servizio sono sotto i 100 m)
-        tipo_a = tipo_ais(s.get("tipo")) if s else ""
-        if not tipo_a or (s.get("lung") or 0) < lunghezza_minima_ais(dove["terminal"], tipo_a):
+        # solo navi vere (carico; passeggeri e cisterne no): niente rimorchiatori e barche
+        # (le bettoline di rifornimento e i mezzi di servizio sono sotto i 100 m).
+        # I motivi di scarto sono tutti in scarto_solo_ais, la stessa funzione della diagnosi.
+        if scarto_solo_ais(dati, mmsi, p, dove, adesso, ricezione_ok):
             continue
-        if tipo_a == "PASS." or (ESCLUDI_CISTERNE and tipo_a == "TANK"):
-            continue                                  # passeggeri/crociere e cisterne (in attesa di conferma): non si visitano
         nome = (s.get("nome") or p.get("nome") or "").upper()
-        if not nome:
-            continue
-        if e_esclusa(dati, s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else "", nome, mmsi):
-            continue                                  # chemical o ro-ro con passeggeri: non si visita
         log("in banchina secondo l'AIS:", nome, dove["molo"], dove["lato"])
         dati["navi"].append({
             "nome": nome, "imo": s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else "",
@@ -845,7 +916,7 @@ def aggiorna_presenze(dati, banchine, adesso):
         })
 
 
-def costruisci_non_visitare(dati, banchine, adesso):
+def costruisci_non_visitare(dati, banchine, adesso, ricezione_ok=None):
     """Le navi che non si visitano (chemical, ro-ro con passeggeri, cisterne) ma che l'AIS vede
     davvero ferme a una banchina della mappa: l'app le disegna in grigio con 'da non visitare',
     cosi' chi guarda sa che sono lì e che si lasciano stare. Se non sono ferme alla banchina
@@ -872,7 +943,7 @@ def costruisci_non_visitare(dati, banchine, adesso):
         if not p or mmsi in in_elenco or p["sog"] >= 0.7:
             continue
         quando = datetime.fromisoformat(p["quando"])
-        if adesso - quando > VALIDITA_FERMA:
+        if adesso - quando > limite_segnale(ricezione_ok):
             continue
         dove = alla_banchina(p["lat"], p["lon"], banchine)
         if not dove:
@@ -895,6 +966,61 @@ def costruisci_non_visitare(dati, banchine, adesso):
                     "quando": quando.astimezone(ROMA).strftime("%H.%M"), "ormeggiata": True, "s_m": dove["s_m"]},
         })
     dati["non_visitare"] = sorted(risultato, key=lambda x: x["nome"])
+
+
+def descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite):
+    """Una riga che dice tutto di una nave vista dall'AIS: velocita', eta' del segnale, banchina piu'
+    vicina (con distanza e lato), dati statici e perche' non e' in elenco."""
+    s = (dati.get("statici") or {}).get(mmsi) or {}
+    eta = int((adesso - datetime.fromisoformat(p["quando"])).total_seconds() // 60)
+    vicine = misura_banchine(p["lat"], p["lon"], banchine)
+    if vicine:
+        d, verso, molo, lato, terminal, _ = vicine[0]
+        banchina = "banchina piu' vicina %s %s a %d m (verso acqua %d)" % (molo, lato, d, verso)
+    else:
+        banchina = "nessuna banchina in mappa"
+    dove = alla_banchina(p["lat"], p["lon"], banchine)
+    motivo = scarto_solo_ais(dati, mmsi, p, dove, adesso, ricezione_ok)
+    in_elenco = any(n.get("mmsi") == mmsi for n in dati.get("navi", []))
+    return "%s (%s): %.1f nodi, segnale di %d min fa%s, %s, tipo %s, %s m | %s" % (
+        (s.get("nome") or p.get("nome") or "?").upper(), mmsi, p["sog"], eta,
+        "" if sentite is None else (", sentita in questo giro" if mmsi in sentite else ", NON sentita in questo giro"),
+        banchina, s.get("tipo", "assente"), s.get("lung", "?"),
+        "IN ELENCO" if in_elenco else ("fuori elenco: " + (motivo or "dovrebbe entrare")))
+
+
+def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
+    """Scrive nel riepilogo del giro (leggibile da fuori) le navi che l'AIS vede ferme o quasi nei moli
+    e non sono in elenco, col motivo preciso; poi la storia delle navi 'seguite'. Serve a capire
+    perche' una nave che si vede in banchina non compare (es. la Chennai Express a Spinelli)."""
+    reg, sta = dati.get("registro", {}), dati.get("statici", {})
+    in_elenco = {n.get("mmsi") for n in dati.get("navi", []) if n.get("mmsi")}
+    in_elenco |= {n.get("mmsi") for n in dati.get("non_visitare", []) if n.get("mmsi")}
+    righe = []
+    for mmsi, p in reg.items():
+        if mmsi in in_elenco or mmsi in SEGUITE or p["sog"] >= 2 or not nei_moli(p):
+            continue
+        if adesso - datetime.fromisoformat(p["quando"]) > VALIDITA_FERMA:
+            continue
+        s = sta.get(mmsi) or {}
+        if s and (s.get("lung") or 0) < 100:
+            continue                                  # rimorchiatori e barche: non interessano
+        vicine = misura_banchine(p["lat"], p["lon"], banchine)
+        vicina = vicine[0][0] if vicine else 9999
+        if vicina > 400 or (not s and vicina > 150):
+            continue                                  # lontana da ogni banchina (all'ancora, in transito): non e' un caso da spiegare
+        righe.append(descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite))
+    for r in sorted(righe)[:30]:
+        log("diagnosi, ferma nei moli:", r)
+    if len(righe) > 30:
+        log("diagnosi: altre", len(righe) - 30, "navi non elencate")
+    for mmsi in SEGUITE:
+        p = reg.get(mmsi)
+        if p:
+            log("seguita:", descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite))
+        else:
+            log("seguita:", mmsi, "- non c'e' nel registro: l'AIS non ne ha ricevuto nessuna posizione negli ultimi 3 giorni;",
+                "dati statici:", dati.get("statici", {}).get(mmsi, "nessuno"))
 
 
 # ---------------------------------------------------------------- memoria tra i giorni
@@ -1026,14 +1152,24 @@ def pulizia(dati, adesso):
         visto = datetime.fromisoformat(n["visto_banchina"]) if n.get("visto_banchina") else None
         part = istante(n.get("partenza_giorno") or n.get("giorno"), n.get("partenza"))
         a = n.get("ais") or {}
+        # regola dell'assenza: per due giri di fila l'AIS ha sentito le altre navi dei moli ma non lei
+        silenzio = (n.get("assenze_ais") or 0) >= ASSENZE_MAX
         if n.get("conferma", {}).get("tipo") == "partenza" and n["conferma"].get("quando"):
             pc = datetime.fromisoformat(n["conferma"]["quando"])
             part = pc if part is None or pc > part else part
         if part is not None and adesso > part + timedelta(minutes=90):
-            if visto and visto > part + timedelta(minutes=30) and a.get("ormeggiata"):
+            if visto and visto > part + timedelta(minutes=30) and a.get("ormeggiata") and not silenzio:
                 n["ritardo"] = True                       # doveva partire, ma e' ancora li'
             else:
                 log("partita:", n["nome"]); continue
+        if silenzio and "giornale" not in n.get("fonti", ["giornale"]):
+            # solo AIS e adesso non la sente piu': se ne e' andata (o e' fuori copertura). Si ricorda
+            # l'ultimo segnale, cosi' non rientra dal registro finche' non ne arriva uno nuovo.
+            log("sparita dall'AIS (assente da", n.get("assenze_ais"), "giri con buona ricezione):", n["nome"])
+            ultimo = (dati.get("registro") or {}).get(n.get("mmsi") or "", {}).get("quando")
+            if ultimo and n.get("mmsi"):
+                dati.setdefault("spente", {})[n["mmsi"]] = ultimo
+            continue
         uscita = datetime.fromisoformat(n["uscita_vista"]) if n.get("uscita_vista") else None
         if uscita and not a.get("ormeggiata"):
             # l'AIS l'ha vista andarsene: per un'ora e mezza resta 'si allontana', poi si toglie
@@ -1053,6 +1189,10 @@ def pulizia(dati, adesso):
             if not visto and dal and (adesso.astimezone(ROMA).date() - datetime.fromisoformat(dal).date()).days > 3:
                 log("in memoria da troppi giorni senza conferme:", n["nome"]); continue
             n["da_confermare"] = not visto
+        if silenzio:
+            n["segnale_perso"] = True                     # sul giornale, ma l'AIS non la sente piu': da confermare
+        else:
+            n.pop("segnale_perso", None)
         tenute.append(n)
     dati["navi"] = tenute
 
@@ -1170,22 +1310,32 @@ def main():
         secondi = int(os.environ.get("AIS_SECONDI") or (720 if ora.hour == 7 and ora.minute < 30 else 480))
         pos, statici = asyncio.run(ascolta_ais(chiave_ais, secondi))
         aggiorna_registro(dati, pos, statici, adesso)
-        aggiorna_presenze(dati, banchine, adesso)
+        # ricezione buona = in questo giro si sono sentite abbastanza navi dentro i moli: solo allora il
+        # silenzio di una nave vuol dire qualcosa (un calo di copertura toglierebbe tutte le navi insieme)
+        sentite = set(pos)
+        nei_moli_n = sum(1 for p in pos.values() if nei_moli(p))
+        ricezione_ok = nei_moli_n >= RICEZIONE_MIN
+        log("AIS: navi sentite nei moli", nei_moli_n, "- ricezione", "buona" if ricezione_ok else "scarsa (la regola dell'assenza non scatta)")
+        aggiorna_presenze(dati, banchine, adesso, sentite, ricezione_ok)
         dati["ais"] = bool(pos)
     else:
         dati["ais"] = False
+        sentite, ricezione_ok = None, None
     escludi_non_visitabili(dati, adesso)      # chemical e ro-ro con passeggeri (dopo l'AIS: serve il suo tipo)
-    costruisci_non_visitare(dati, banchine, adesso)   # quelle escluse che sono davvero ferme alle nostre banchine
+    costruisci_non_visitare(dati, banchine, adesso, ricezione_ok)   # quelle escluse che sono davvero ferme alle nostre banchine
     applica_taratura(dati)
     riassunto_taratura(dati)
     # la memoria dei giorni di taratura non serve oltre una settimana
     lim = (adesso.astimezone(ROMA).date() - timedelta(days=7)).isoformat()
     dati["taratura_giorni"] = {k: 1 for k in dati.get("taratura_giorni", {}) if k.rsplit(">", 1)[-1] >= lim}
     pulizia(dati, adesso)
+    if chiave_ais:
+        diagnostica_moli(dati, banchine, adesso, sentite, ricezione_ok)
     for n in sorted(dati.get("navi", []), key=lambda x: x.get("nome") or ""):
         log("in elenco:", n.get("nome"), "|", n.get("tipo") or "?", "| AIS tipo", (dati.get("statici") or {}).get(n.get("mmsi") or "", {}).get("tipo", "-"),
             "|", (n.get("dove") or {}).get("terminal"),
-            "|", "ormeggiata" if (n.get("ais") or {}).get("ormeggiata") else ("solo AIS" if n.get("fonti") == ["ais"] else "giornale"))
+            "|", "segnale perso" if n.get("segnale_perso") else
+            ("ormeggiata" if (n.get("ais") or {}).get("ormeggiata") else ("solo AIS" if n.get("fonti") == ["ais"] else "giornale")))
     dati["aggiornato"] = datetime.now(timezone.utc).isoformat()
     dati["esempio"] = False
     chiudi(k, dati, uscita)

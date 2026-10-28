@@ -287,6 +287,168 @@ class NaviPiccoleEPasseggeri(unittest.TestCase):
         self.assertEqual([(n["nome"], n["motivo"]) for n in d["non_visitare"]], [("TRAGHETTO", "nave passeggeri o da crociera")])
 
 
+class RegolaDellAssenza(unittest.TestCase):
+    """Una nave ferma trasmette ogni 3 minuti. Se per due giri di fila l'AIS sente le altre navi dei moli
+    ma non lei: segnale perso, e se e' solo AIS esce dall'elenco. Se non si sente nessuno (calo di copertura)
+    la regola non scatta."""
+    MMSI = "247000009"
+    t0 = quando("2026-10-27", "10:00")
+
+    def nave(self, **extra):
+        n = {"nome": "SIGMA", "imo": "", "mmsi": self.MMSI, "tipo": "CONT.", "fonti": ["giornale"], "giorno": "2026-10-27",
+             "visto_banchina": self.t0.isoformat(),
+             "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente", "in_rada": False}}
+        n.update(extra)
+        return n
+
+    def dati(self, navi, minuti_fa_segnale=0):
+        return {"navi": navi, "escluse": [],
+                "statici": {self.MMSI: {"imo": "9074729", "nome": "SIGMA", "tipo": 70, "lung": 200}},
+                "registro": {self.MMSI: posizione(self.t0, minuti_fa_segnale)}}
+
+    def giro(self, d, minuti, sentite=("999",), ricezione_ok=True):
+        """un giro 'minuti' dopo le 10:00: l'AIS ha sentito solo gli MMSI in 'sentite'"""
+        from datetime import timedelta
+        adesso = self.t0 + timedelta(minutes=minuti)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, adesso, set(sentite), ricezione_ok)
+        A.pulizia(d, adesso)
+        return adesso
+
+    def test_nave_del_giornale_dopo_due_assenze_diventa_segnale_perso_ma_resta(self):
+        d = self.dati([self.nave()])
+        self.giro(d, 15)
+        n = d["navi"][0]
+        self.assertEqual(n["assenze_ais"], 1)
+        self.assertTrue(n["ais"]["ormeggiata"])
+        self.assertNotIn("silenzio", n["ais"])                          # un giro solo: ancora 'in tempo'
+        self.assertNotIn("segnale_perso", n)
+        self.giro(d, 30)
+        n = d["navi"][0]
+        self.assertEqual(n["assenze_ais"], 2)
+        self.assertTrue(n["ais"]["silenzio"])
+        self.assertTrue(n["segnale_perso"])                             # dal giornale: resta, da confermare
+
+    def test_se_la_nave_si_risente_il_conto_riparte(self):
+        d = self.dati([self.nave()])
+        self.giro(d, 15); self.giro(d, 30)
+        self.assertTrue(d["navi"][0]["segnale_perso"])
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-45)    # segnale nuovo
+        self.giro(d, 45, sentite=(self.MMSI,))
+        n = d["navi"][0]
+        self.assertEqual(n["assenze_ais"], 0)
+        self.assertNotIn("silenzio", n["ais"])
+        self.assertNotIn("segnale_perso", n)
+
+    def test_senza_buona_ricezione_il_silenzio_non_conta(self):
+        d = self.dati([self.nave()])
+        for minuti in (15, 30, 45, 60, 75):
+            self.giro(d, minuti, sentite=(), ricezione_ok=False)
+        n = d["navi"][0]
+        self.assertEqual(n.get("assenze_ais", 0), 0)
+        self.assertNotIn("segnale_perso", n)
+
+    def test_senza_sapere_chi_e_stato_sentito_la_regola_non_scatta(self):
+        d = self.dati([self.nave()])
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0)                  # chiamata 'vecchia maniera'
+        self.assertNotIn("assenze_ais", d["navi"][0])
+
+    def test_nave_non_ancora_arrivata_non_accumula_assenze(self):
+        n = self.nave()
+        n.pop("visto_banchina")                                          # mai vista ferma in banchina
+        d = self.dati([n])
+        d["registro"][self.MMSI] = posizione(self.t0, lat=44.30, sog=12.0, cog=0)   # ultima posizione: in mare
+        self.giro(d, 15); self.giro(d, 30); self.giro(d, 45)
+        self.assertEqual(d["navi"][0].get("assenze_ais", 0), 0)
+        self.assertNotIn("segnale_perso", d["navi"][0])
+
+    def test_nave_che_se_ne_sta_andando_non_accumula_assenze(self):
+        d = self.dati([self.nave(uscita_vista=self.t0.isoformat())])
+        self.giro(d, 15)
+        self.assertEqual(d["navi"][0].get("assenze_ais", 0), 0)
+
+    def test_nave_solo_ais_dopo_due_assenze_esce_e_non_rientra_dal_registro(self):
+        d = self.dati([self.nave(fonti=["ais"])])
+        self.giro(d, 15)
+        self.assertEqual(len(d["navi"]), 1)
+        self.giro(d, 30)
+        self.assertEqual(d["navi"], [])                                  # sparita
+        self.assertIn(self.MMSI, d["spente"])
+        self.giro(d, 45)                                                 # il registro ha ancora la vecchia posizione
+        self.assertEqual(d["navi"], [])
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-60)     # ma se ricompare un segnale nuovo...
+        self.giro(d, 60, sentite=(self.MMSI,))
+        self.assertEqual([n["nome"] for n in d["navi"]], ["SIGMA"])      # ...rientra
+
+    def test_nave_del_giornale_con_partenza_passata_e_silenzio_si_toglie_invece_di_ritardo(self):
+        from datetime import timedelta
+        adesso = self.t0 + timedelta(hours=1)
+        for assenze, atteso in ((0, ["SIGMA"]), (2, [])):
+            n = self.nave(partenza="09.00", assenze_ais=assenze, visto_banchina=(adesso - timedelta(minutes=10)).isoformat(),
+                          ais={"ormeggiata": True})
+            d = {"navi": [n]}
+            A.pulizia(d, adesso)
+            self.assertEqual([x["nome"] for x in d["navi"]], atteso, assenze)
+        d = {"navi": [self.nave(partenza="09.00", visto_banchina=(adesso - timedelta(minutes=10)).isoformat(), ais={"ormeggiata": True})]}
+        A.pulizia(d, adesso)
+        self.assertTrue(d["navi"][0]["ritardo"])                         # senza silenzio vale la regola di sempre
+
+    # --- nuove navi solo AIS: serve un segnale fresco, se la ricezione e' buona
+    def test_solo_ais_nuova_nave_serve_segnale_di_meno_di_40_minuti(self):
+        for minuti, ok, atteso in ((30, True, 1), (50, True, 0), (50, False, 1), (50, None, 1), (7 * 60, False, 0)):
+            d = self.dati([], minuti_fa_segnale=minuti)
+            A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0, {"999"} if ok is not None else None, ok)
+            self.assertEqual(len(d["navi"]), atteso, (minuti, ok))
+
+    def test_non_visitare_con_buona_ricezione_vale_il_segnale_fresco(self):
+        d = {"navi": [], "escluse": [], "statici": {self.MMSI: {"imo": "9074729", "nome": "THETA", "tipo": 80, "lung": 150}},
+             "registro": {self.MMSI: posizione(self.t0, 90)}}
+        A.registra_esclusa(d, {"nome": "THETA", "imo": "9074729", "tipo": "CHIM."}, "nave chemical", self.t0)
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.t0, True)
+        self.assertEqual(d["non_visitare"], [])                          # ferma da 90 minuti: partita
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.t0, False)
+        self.assertEqual(len(d["non_visitare"]), 1)                      # senza buona ricezione non si sa: resta
+
+
+class DiagnosiDelGiro(unittest.TestCase):
+    t0 = quando("2026-10-27", "10:00")
+
+    def righe(self, d, sentite=None, ricezione_ok=True):
+        del A.RIEPILOGO[:]
+        A.diagnostica_moli(d, BANCHINE_PROVA, self.t0, sentite, ricezione_ok)
+        return "\n".join(A.RIEPILOGO)
+
+    def test_nave_grande_ferma_nei_moli_ma_fuori_elenco_dice_perche(self):
+        casi = {"velocita' 1.2 nodi": ("247000020", posizione(self.t0, sog=1.2), {"tipo": 70, "lung": 300}),
+                "tipo AIS 99": ("247000021", posizione(self.t0), {"tipo": 99, "lung": 300}),
+                "non e' a ridosso": ("247000022", posizione(self.t0, lat=44.4005, lon=8.9015), {"tipo": 70, "lung": 300}),   # a 120 m
+                "dati statici": ("247000023", posizione(self.t0), None)}
+        for atteso, (mmsi, p, s) in casi.items():
+            d = {"navi": [], "escluse": [], "statici": {mmsi: {"nome": "GRANDE", **s}} if s else {}, "registro": {mmsi: p}}
+            self.assertIn(atteso, self.righe(d), atteso)
+
+    def test_navi_lontane_da_ogni_banchina_non_si_elencano(self):
+        d = {"navi": [], "escluse": [], "statici": {"247000024": {"nome": "ALL'ANCORA", "tipo": 70, "lung": 300}},
+             "registro": {"247000024": posizione(self.t0, lat=44.4050, lon=8.9100)}}      # a ~800 m dalla banchina
+        self.assertNotIn("diagnosi, ferma nei moli", self.righe(d))
+
+    def test_rimorchiatori_e_navi_in_elenco_non_si_elencano(self):
+        d = {"navi": [{"nome": "IN ELENCO", "mmsi": "247000030"}], "escluse": [],
+             "statici": {"247000030": {"tipo": 70, "lung": 300}, "247000031": {"tipo": 52, "lung": 30}},
+             "registro": {"247000030": posizione(self.t0), "247000031": posizione(self.t0)}}
+        self.assertNotIn("diagnosi, ferma nei moli", self.righe(d))
+
+    def test_nave_seguita_assente_dal_registro_lo_dice(self):
+        d = {"navi": [], "escluse": [], "statici": {}, "registro": {}}
+        self.assertIn("non c'e' nel registro", self.righe(d, set()))
+        seguita = A.SEGUITE[0]
+        d = {"navi": [], "escluse": [], "statici": {seguita: {"nome": "CHENNAI EXPRESS", "tipo": 71, "lung": 304}},
+             "registro": {seguita: posizione(self.t0)}}
+        testo = self.righe(d, set())
+        self.assertIn("CHENNAI EXPRESS", testo)
+        self.assertIn("NON sentita in questo giro", testo)
+        self.assertIn("banchina piu' vicina MOLO ponente", testo)
+
+
 class ZonaTraPagine(unittest.TestCase):
     def _pdf_due_pagine(self):
         from PIL import Image
