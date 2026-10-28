@@ -32,7 +32,13 @@ VALIDITA_FERMA = timedelta(hours=6)         # ... e di una nave ferma alla banch
 # per due giri di fila (con buona ricezione, vedi qualita_ricezione), non e' piu' li' (o non la sentiamo piu'):
 # da confermare, e se e' solo AIS esce dall'elenco.
 SEGNALE_RECENTE = timedelta(minutes=40)     # una nave solo-AIS entra nell'elenco solo con un segnale piu' fresco di cosi'
-ASSENZE_MAX = 2                             # giri di fila senza sentirla (con buona ricezione) prima di 'segnale perso'
+# Giri di fila senza sentirla (con buona ricezione) prima di 'segnale perso': almeno 3 (45 minuti di giorno), fino a 6 per
+# le navi che l'AIS di solito sente male (vedi assenze_necessarie). Con 2 (fino al 28/10 sera) il 28/10 tra le 14:33 e le 16:58
+# GOYNUK, CHENNAI EXPRESS ed ELISABETH RUSS erano passate a 'segnale perso' pur essendo in banchina (risentite al giro dopo).
+ASSENZE_MIN = 3
+ASSENZE_TETTO = 6
+ERRORE_AMMESSO = 0.02                       # probabilita' accettata di dire 'segnale perso' a una nave che c'e'
+ASSENZE_MAX = ASSENZE_MIN                   # (nome di prima)
 RICEZIONE_MIN = 5                           # navi ferme nei moli (ultime 2 ore) necessarie per giudicare la ricezione
 RICEZIONE_QUOTA = 0.6                       # quota di quelle sentita in questo giro per dire che la ricezione e' buona
 FINESTRA_RICEZIONE = timedelta(hours=2)      # le navi ferme nei moli sentite da meno di cosi' fanno da riferimento
@@ -771,13 +777,29 @@ def imo_valido(s):
 
 def numeri_nel_nome(nome):
     """Le parole-numero del nome (cifre e numeri romani): ARGO I e ARGO II, XIN YA ZHOU 1 e 2 sono navi diverse,
-    anche se i nomi si somigliano quasi del tutto."""
-    return sorted(t for t in re.findall(r"[A-Z0-9]+", (nome or "").upper()) if re.fullmatch(r"\d+|[IVX]{1,5}", t))
+    anche se i nomi si somigliano quasi del tutto. Il giornale (scansione) legge a volte I come L o 1: "MSC EDITH IL"
+    e' "MSC EDITH II". Nelle parole fatte solo di I, V, X, L e 1 si legge quindi L e 1 come I."""
+    out = []
+    for t in re.findall(r"[A-Z0-9]+", (nome or "").upper()):
+        t = _numero_letto(t)
+        if re.fullmatch(r"\d+|[IVX]{1,5}", t):
+            out.append(t)
+    return sorted(out)
+
+
+def _numero_letto(t):
+    """Una parola fatta solo di I, V, X, L e 1 e' un numero romano letto forse male: L e 1 diventano I."""
+    return t.replace("1", "I").replace("L", "I") if re.fullmatch(r"[IVXL1]{1,5}", t) else t
+
+
+def nome_per_confronto(nome):
+    """Il nome senza spazi e segni, con i numeri romani letti male rimessi a posto (ARGO 1 = ARGO I)."""
+    return "".join(_numero_letto(t) for t in re.findall(r"[A-Z0-9]+", (nome or "").upper()))
 
 
 def simili(a, b):
     """Stesso nome, oppure nome quasi uguale (letture sbagliate del giornale), ma con gli stessi numeri."""
-    na, nb = norm_nome(a), norm_nome(b)
+    na, nb = nome_per_confronto(a), nome_per_confronto(b)
     if not na or not nb:
         return False
     if na == nb:
@@ -821,6 +843,27 @@ def azzera_conteggi_vecchi(dati):
     for n in dati.get("navi", []):
         n.pop("assenze_ais", None); n.pop("segnale_perso", None)
     dati["regola_assenza"] = VERSIONE_REGOLA_ASSENZA
+
+
+def assenze_necessarie(n):
+    """Quanti giri di fila senza sentirla servono per dire 'segnale perso'. Ogni nave ferma in banchina si porta dietro
+    quante volte l'AIS l'ha sentita nei giri con buona ricezione (n['ascolto'] = [sentita, giri]): la probabilita' di
+    sentirla in un giro e' stimata (sentita + 3) / (giri + 4), cioe' 0,75 finche' non si sa niente. Servono tanti giri
+    di assenza quanti bastano perche' sbagliare per caso (non sentirla tutte le volte pur essendo li') sia meno del 2%:
+    almeno 3, al massimo 6. Una nave che l'AIS sente quasi sempre: 3 giri; una che sente meta' delle volte: 6."""
+    sentita, giri = (list(n.get("ascolto") or [0, 0]) + [0, 0])[:2]
+    # la stima si fa sui giri prima delle assenze di adesso: se no ogni assenza abbasserebbe la stima e allungherebbe
+    # da sola l'attesa, anche per una nave partita davvero
+    giri = max(sentita, giri - (n.get("assenze_ais") or 0))
+    p = (sentita + 3) / (giri + 4)
+    if p >= 1:
+        return ASSENZE_MIN
+    k = math.ceil(math.log(ERRORE_AMMESSO) / math.log(1 - p) - 1e-9)
+    return max(ASSENZE_MIN, min(ASSENZE_TETTO, k))
+
+
+def in_silenzio(n):
+    return (n.get("assenze_ais") or 0) >= assenze_necessarie(n)
 
 
 def limite_segnale(ricezione_ok):
@@ -978,7 +1021,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         if n.get("mmsi") and abbinamento_sbagliato(n, sta.get(n["mmsi"])):
             log("abbinamento AIS sbagliato, tolto:", n["nome"], n.get("imo"), "non e'", (sta.get(n["mmsi"]) or {}).get("nome"),
                 (sta.get(n["mmsi"]) or {}).get("imo"))
-            n.pop("mmsi")
+            n.pop("mmsi"); n.pop("ascolto", None); n.pop("assenze_ais", None)
         elif n.get("mmsi"):
             usati.add(n["mmsi"])
     for n in dati["navi"]:
@@ -990,12 +1033,21 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             continue
         n["mmsi"] = mmsi; usati.add(mmsi)
         if sentite is not None:
+            # giro che conta: buona ricezione e nave che era ferma alla nostra banchina (e non se ne sta andando)
+            conta = bool(ricezione_ok and n.get("visto_banchina") and not n.get("uscita_vista"))
+            if conta:
+                sentita, giri = (list(n.get("ascolto") or [0, 0]) + [0, 0])[:2]
+                sentita, giri = sentita + (1 if mmsi in sentite else 0), giri + 1
+                if giri > 40:                                  # si ricordano gli ultimi 40 giri, piu' o meno
+                    sentita, giri = sentita * 40 / giri, 40
+                n["ascolto"] = [round(sentita, 2), round(giri, 2)]
             if mmsi in sentite:
                 n["assenze_ais"] = 0
-            elif ricezione_ok and n.get("visto_banchina") and not n.get("uscita_vista"):
-                # era ferma alla nostra banchina, si sentono le altre navi e lei no: un giro di assenza
+            elif conta:
+                # si sentono le altre navi e lei no: un giro di assenza
                 n["assenze_ais"] = (n.get("assenze_ais") or 0) + 1
-                log("assente all'AIS (con buona ricezione):", n["nome"], "giri di fila:", n["assenze_ais"])
+                log("assente all'AIS (con buona ricezione):", n["nome"], "giri di fila:", n["assenze_ais"],
+                    "su", assenze_necessarie(n), "| sentita in", n["ascolto"][0], "giri su", n["ascolto"][1])
         s = sta.get(mmsi, {})
         if s.get("nome") and len(s["nome"]) >= 3:
             n["nome"] = s["nome"].upper()                     # nome ufficiale dall'AIS
@@ -1018,7 +1070,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         if dove:
             impara(dati, n.get("dove_giornale"), dove, chiave_nave(n))
             a["ormeggiata"] = True; a["s_m"] = dove["s_m"]
-            if (n.get("assenze_ais") or 0) >= ASSENZE_MAX:
+            if in_silenzio(n):
                 a["silenzio"] = True                              # l'app non la dice piu' 'in tempo'
             n["dove"] = {**n.get("dove", {}), "terminal": dove["terminal"], "molo": dove["molo"],
                          "lato": dove["lato"] if dove["lato"] != "testata" else None,
@@ -1175,9 +1227,11 @@ def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         if adesso - datetime.fromisoformat(p["quando"]) > VALIDITA_FERMA:
             continue
         s = sta.get(mmsi) or {}
-        if s and (s.get("lung") or 0) < 100:
-            continue                                  # rimorchiatori e barche: non interessano
         vicine = misura_banchine(p["lat"], p["lon"], banchine)
+        rinfuse_piccola = bool(vicine) and vicine[0]["terminal"] == "rinfuse" and tipo_ais(s.get("tipo")) == "CARGO" \
+            and (s.get("lung") or 0) >= LUNGHEZZA_MINIMA_AIS_RINFUSE
+        if s and (s.get("lung") or 0) < 100 and not rinfuse_piccola:
+            continue                                  # rimorchiatori e barche: non interessano
         vicina = vicine[0]["d"] if vicine else 9999
         if vicina > 400 or (not s and vicina > 150):
             continue                                  # lontana da ogni banchina (all'ancora, in transito): non e' un caso da spiegare
@@ -1336,7 +1390,7 @@ def pulizia(dati, adesso):
         part = istante(n.get("partenza_giorno") or n.get("giorno"), n.get("partenza"))
         a = n.get("ais") or {}
         # regola dell'assenza: per due giri di fila l'AIS ha sentito le altre navi dei moli ma non lei
-        silenzio = (n.get("assenze_ais") or 0) >= ASSENZE_MAX
+        silenzio = in_silenzio(n)
         if n.get("conferma", {}).get("tipo") == "partenza" and n["conferma"].get("quando"):
             pc = datetime.fromisoformat(n["conferma"]["quando"])
             part = pc if part is None or pc > part else part

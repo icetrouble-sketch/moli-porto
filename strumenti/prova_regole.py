@@ -288,9 +288,9 @@ class NaviPiccoleEPasseggeri(unittest.TestCase):
 
 
 class RegolaDellAssenza(unittest.TestCase):
-    """Una nave ferma trasmette ogni 3 minuti. Se per due giri di fila l'AIS sente le altre navi dei moli
-    ma non lei: segnale perso, e se e' solo AIS esce dall'elenco. Se non si sente nessuno (calo di copertura)
-    la regola non scatta."""
+    """Una nave ferma trasmette ogni 3 minuti. Se per tre giri di fila (o di piu', per le navi che l'AIS sente male)
+    l'AIS sente le altre navi dei moli ma non lei: segnale perso, e se e' solo AIS esce dall'elenco. Se non si sente
+    nessuno (calo di copertura) la regola non scatta."""
     MMSI = "247000009"
     t0 = quando("2026-10-27", "10:00")
 
@@ -314,26 +314,50 @@ class RegolaDellAssenza(unittest.TestCase):
         A.pulizia(d, adesso)
         return adesso
 
-    def test_nave_del_giornale_dopo_due_assenze_diventa_segnale_perso_ma_resta(self):
+    def test_nave_del_giornale_dopo_tre_assenze_diventa_segnale_perso_ma_resta(self):
         d = self.dati([self.nave()])
-        self.giro(d, 15)
+        for minuti, assenze in ((15, 1), (30, 2)):
+            self.giro(d, minuti)
+            n = d["navi"][0]
+            self.assertEqual(n["assenze_ais"], assenze)
+            self.assertTrue(n["ais"]["ormeggiata"])
+            self.assertNotIn("silenzio", n["ais"])                      # uno o due giri: ancora 'in tempo'
+            self.assertNotIn("segnale_perso", n)
+        self.giro(d, 45)
         n = d["navi"][0]
-        self.assertEqual(n["assenze_ais"], 1)
-        self.assertTrue(n["ais"]["ormeggiata"])
-        self.assertNotIn("silenzio", n["ais"])                          # un giro solo: ancora 'in tempo'
-        self.assertNotIn("segnale_perso", n)
-        self.giro(d, 30)
-        n = d["navi"][0]
-        self.assertEqual(n["assenze_ais"], 2)
+        self.assertEqual(n["assenze_ais"], 3)
         self.assertTrue(n["ais"]["silenzio"])
         self.assertTrue(n["segnale_perso"])                             # dal giornale: resta, da confermare
 
-    def test_se_la_nave_si_risente_il_conto_riparte(self):
+    def test_due_giri_mancati_non_bastano_piu(self):
+        """28/10 14:33-16:58: GOYNUK, CHENNAI EXPRESS ed ELISABETH RUSS, in banchina, non sentite per due giri di fila
+        con 'buona' ricezione, e risentite al terzo. Con la regola dei due giri passavano a 'segnale perso'."""
         d = self.dati([self.nave()])
         self.giro(d, 15); self.giro(d, 30)
-        self.assertTrue(d["navi"][0]["segnale_perso"])
-        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-45)    # segnale nuovo
+        self.assertNotIn("segnale_perso", d["navi"][0])
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-45)
         self.giro(d, 45, sentite=(self.MMSI,))
+        self.assertEqual(d["navi"][0]["assenze_ais"], 0)
+
+    def test_le_navi_sentite_male_aspettano_di_piu(self):
+        self.assertEqual(A.assenze_necessarie({}), 3)                           # niente storia: 3 giri
+        self.assertEqual(A.assenze_necessarie({"ascolto": [20, 20]}), 3)          # sentita sempre
+        self.assertEqual(A.assenze_necessarie({"ascolto": [6, 10]}), 4)           # 6 volte su 10
+        self.assertEqual(A.assenze_necessarie({"ascolto": [5, 10]}), 5)           # una volta su due
+        self.assertEqual(A.assenze_necessarie({"ascolto": [2, 20]}), 6)           # quasi mai: al massimo 6
+        d = self.dati([self.nave(ascolto=[5, 10])])
+        for minuti in (15, 30, 45, 60):
+            self.giro(d, minuti)
+        self.assertNotIn("segnale_perso", d["navi"][0])                       # 4 giri: per lei non bastano
+        self.giro(d, 75)
+        self.assertTrue(d["navi"][0]["segnale_perso"])
+
+    def test_se_la_nave_si_risente_il_conto_riparte(self):
+        d = self.dati([self.nave()])
+        self.giro(d, 15); self.giro(d, 30); self.giro(d, 45)
+        self.assertTrue(d["navi"][0]["segnale_perso"])
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-60)    # segnale nuovo
+        self.giro(d, 60, sentite=(self.MMSI,))
         n = d["navi"][0]
         self.assertEqual(n["assenze_ais"], 0)
         self.assertNotIn("silenzio", n["ais"])
@@ -366,23 +390,23 @@ class RegolaDellAssenza(unittest.TestCase):
         self.giro(d, 15)
         self.assertEqual(d["navi"][0].get("assenze_ais", 0), 0)
 
-    def test_nave_solo_ais_dopo_due_assenze_esce_e_non_rientra_dal_registro(self):
+    def test_nave_solo_ais_dopo_tre_assenze_esce_e_non_rientra_dal_registro(self):
         d = self.dati([self.nave(fonti=["ais"])])
-        self.giro(d, 15)
+        self.giro(d, 15); self.giro(d, 30)
         self.assertEqual(len(d["navi"]), 1)
-        self.giro(d, 30)
+        self.giro(d, 45)
         self.assertEqual(d["navi"], [])                                  # sparita
         self.assertIn(self.MMSI, d["spente"])
-        self.giro(d, 45)                                                 # il registro ha ancora la vecchia posizione
+        self.giro(d, 60)                                                 # il registro ha ancora la vecchia posizione
         self.assertEqual(d["navi"], [])
-        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-60)     # ma se ricompare un segnale nuovo...
-        self.giro(d, 60, sentite=(self.MMSI,))
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-75)     # ma se ricompare un segnale nuovo...
+        self.giro(d, 75, sentite=(self.MMSI,))
         self.assertEqual([n["nome"] for n in d["navi"]], ["SIGMA"])      # ...rientra
 
     def test_nave_del_giornale_con_partenza_passata_e_silenzio_si_toglie_invece_di_ritardo(self):
         from datetime import timedelta
         adesso = self.t0 + timedelta(hours=1)
-        for assenze, atteso in ((0, ["SIGMA"]), (2, [])):
+        for assenze, atteso in ((0, ["SIGMA"]), (3, [])):
             n = self.nave(partenza="09.00", assenze_ais=assenze, visto_banchina=(adesso - timedelta(minutes=10)).isoformat(),
                           ais={"ormeggiata": True})
             d = {"navi": [n]}
@@ -537,7 +561,7 @@ class GiriDellaNotte(unittest.TestCase):
             reg[str(300 + i)] = posizione(self.t0, 0)                                  # tre delle altre cinque si sentono adesso
         self.assertEqual(A.qualita_ricezione(d, sentite, self.t0, f), (True, 10, 8))
 
-    def test_due_giri_di_notte_di_assenza_fanno_segnale_perso(self):
+    def test_tre_giri_di_notte_di_assenza_fanno_segnale_perso(self):
         from datetime import timedelta
         n = {"nome": "SIGMA", "imo": "", "mmsi": self.MMSI, "tipo": "CONT.", "fonti": ["giornale"], "giorno": "2026-10-27",
              "visto_banchina": (self.t0 - timedelta(hours=4)).isoformat(),
@@ -552,6 +576,11 @@ class GiriDellaNotte(unittest.TestCase):
         A.aggiorna_presenze(d, BANCHINE_PROVA, t6, {"999"}, True)                       # giro delle 6
         A.pulizia(d, t6)
         self.assertEqual(d["navi"][0]["assenze_ais"], 2)
+        self.assertNotIn("segnale_perso", d["navi"][0])
+        t7 = self.t0 + timedelta(hours=4)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, t7, {"999"}, True)                       # giro delle 7
+        A.pulizia(d, t7)
+        self.assertEqual(d["navi"][0]["assenze_ais"], 3)
         self.assertTrue(d["navi"][0]["segnale_perso"])
 
     def test_ascolto_piu_lungo_di_notte(self):
@@ -888,7 +917,8 @@ class NaviGemelle(unittest.TestCase):
     def test_i_numeri_nel_nome_distinguono(self):
         for a, b in (("ARGO I", "ARGO II"), ("XIN YA ZHOU 1", "XIN YA ZHOU 2"), ("STAR ATLANTIC", "STAR ATLANTIS 2")):
             self.assertFalse(A.simili(a, b), (a, b))
-        for a, b in (("JOLLY GIADA", "JOLLY GlADA"), ("MSC RITA V", "MSC RITA V"), ("SEASPAN BRIGHTNESS", "SEASPAN BRIGHTNES")):
+        for a, b in (("JOLLY GIADA", "JOLLY GlADA"), ("MSC RITA V", "MSC RITA V"), ("SEASPAN BRIGHTNESS", "SEASPAN BRIGHTNES"),
+                     ("MSC EDITH II", "MSC EDITH IL"), ("ARGO I", "ARGO 1")):
             self.assertTrue(A.simili(a, b), (a, b))                           # letture sbagliate del giornale: stessa nave
 
     def test_con_due_imo_validi_decide_l_imo(self):
