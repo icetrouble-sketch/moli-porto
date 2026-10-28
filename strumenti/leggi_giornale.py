@@ -48,6 +48,41 @@ def riconosci_accosto(testo):
             "testata" if "TESTATA" in t else ("prolungamento" if "PROL" in t else None))
     return {"terminal": MOLI[molo], "molo": molo.title(), "lato": lato, "punto": punto, "in_rada": rada}
 
+def _quasi_contiene(parola, titolo):
+    """Nelle lettere del titolo c'e' la parola, al massimo con una lettera letta male (per le parole lunghe)."""
+    return difflib.SequenceMatcher(None, parola, titolo).find_longest_match(0, len(parola), 0, len(titolo)).size >= len(parola) - 1
+
+def _parola_breve(parole, bersaglio):
+    """Per le parole corte (DIGA, MEZZI) non basta un pezzo dentro un'altra parola: "NAVIGAZIONE" e "OBBLIGATORIO"
+    contengono "IGA". Serve la parola intera (anche con una lettera letta male) oppure attaccata all'inizio o alla
+    fine di un'altra (MEZZIDIGA, DIGAFORANEA)."""
+    for w in parole:
+        if abs(len(w) - len(bersaglio)) <= 1 and difflib.SequenceMatcher(None, w, bersaglio).ratio() >= 0.75:
+            return True
+        if len(bersaglio) + 2 <= len(w) <= len(bersaglio) + 9 and (w.startswith(bersaglio) or w.endswith(bersaglio)):
+            return True
+    return False
+
+def zona_del_titolo(testo):
+    """La zona del giornale annunciata da una riga-titolo (PREVISIONI DEL..., VARIAZIONI, AREA MULTEDO,
+    AREA VOLTRI, MEZZI DIGA), oppure None se il titolo non ne annuncia una."""
+    t = (testo or "").upper()
+    titolo = re.sub(r"[^A-Z]", "", t)
+    parole = re.findall(r"[A-Z]+", t)
+    if not titolo:
+        return None
+    if _parola_breve(parole, "DIGA") or _parola_breve(parole, "MEZZI"):
+        return "MEZZI DIGA"
+    if _quasi_contiene("MULTEDO", titolo):
+        return "AREA MULTEDO"
+    if _quasi_contiene("VOLTRI", titolo):
+        return "AREA VOLTRI"
+    if _quasi_contiene("VARIAZIONI", titolo):
+        return "VARIAZIONI"
+    if _quasi_contiene("PREVISIONI", titolo):
+        return "PRINCIPALE"
+    return None
+
 def raggruppa(pos, tolleranza):
     """Unisce posizioni vicine (spessore delle linee) e ne tiene il centro."""
     gruppi, cur = [], []
@@ -195,17 +230,8 @@ def leggi(percorso, zona_iniziale="PRINCIPALE"):
             titolo = re.sub(r"[^A-Z]", "", testo_titolo.upper())
             if not titolo:
                 continue
-            simile = lambda parola: difflib.SequenceMatcher(None, parola, titolo).find_longest_match(0, len(parola), 0, len(titolo)).size >= len(parola) - 1
-            if simile("DIGA") or simile("MEZZI"):
-                zona = "MEZZI DIGA"
-            elif simile("MULTEDO"):
-                zona = "AREA MULTEDO"
-            elif simile("VOLTRI"):
-                zona = "AREA VOLTRI"
-            elif simile("VARIAZIONI"):
-                zona = "VARIAZIONI"
-            elif simile("PREVISIONI"):
-                zona = "PRINCIPALE"
+            simile = lambda parola: _quasi_contiene(parola, titolo)
+            zona = zona_del_titolo(testo_titolo) or zona
             for nome in ("ARRIVI", "PARTENZE", "MOVIMENTI"):
                 if titolo.startswith(nome[:5]) or (len(titolo) <= len(nome) + 3 and simile(nome)):
                     sezione = nome

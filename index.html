@@ -263,6 +263,7 @@
   .nave.rischio path{fill:#8FA6C1;stroke:var(--arancio);stroke-width:2;stroke-dasharray:5 3}
   .nave.visitata path{fill:#A9C4A3;stroke:#fff;stroke-dasharray:none}
   .nave.nv path{fill:#B8B3A8;stroke:#fff;stroke-width:1.3}
+  .nave.conferma path{fill:#C9D3DE;stroke:var(--arancio-scuro);stroke-width:1.6;stroke-dasharray:3 3}
   .nave.lampeggia path{animation:lampo 1.1s ease-in-out 3}
   @keyframes lampo{50%{fill:var(--arancio)}}
   .et-nave{pointer-events:none}
@@ -271,6 +272,8 @@
   .et-nave.nv rect{stroke:#8B857A;fill:rgba(244,242,236,.95)}
   .et-nave.nv text{fill:#6F6A61;font-weight:600}
   .et-nave.scelta rect{stroke:#D9A000;stroke-width:2;fill:#FFF9E2}
+  .et-nave.conferma rect{stroke:var(--arancio-scuro);stroke-dasharray:3 2}
+  .et-nave.conferma text{fill:#8A3F17}
   .lontano .et-nave{display:none}
   .leg-nave{width:16px;height:7px;border-radius:2px 5px 5px 2px;background:#3B5F86}
   .legenda small{font-size:12px}
@@ -322,6 +325,7 @@
   .stato-n.prevista,.stato-n.partita,.stato-n.uscita,.stato-n.nv{background:#ECE9E1;color:#6F6A61}
   .stato-n.rada,.stato-n.avvicina{background:#E6EEF6;color:#3B5F86}
   .stato-n.scelta-leg{background:#FFF6D6;color:#8A6500}
+  .stato-n.conferma{background:#FFF1E0;color:#9A4A12;box-shadow:inset 0 0 0 1px rgba(184,70,26,.45)}
   .nv.spenta{box-shadow:none;background:#FAF9F5}
   .nv.spenta h4{color:#6F6A61}
   .nv .ais-riga{margin:5px 0 0;font-size:12.5px;color:#3B5F86;font-weight:600}
@@ -1657,8 +1661,21 @@ window.avviaApp = function(){
   }
   function dataBreve(iso){ var p = String(iso || "").split("-"); return p.length === 3 ? Number(p[2]) + "/" + Number(p[1]) : iso; }
 
-  /* lo stato di una nave all'orario della visita (V = minuti di oggi) */
+  /* lo stato di una nave all'orario della visita (V = minuti di oggi).
+     Se i dati sono vecchi (nessun aggiornamento da oltre 45 minuti) una nave "In tempo" o "A rischio" e' solo
+     "Da confermare": la si vedeva ferma in banchina, ma nel frattempo puo' essere partita. Resta sulla mappa,
+     tratteggiata, e non entra nel conteggio delle navi da visitare. */
   function statoNave(n, V){
+    var st = statoNaveDaiDati(n, V);
+    if((st.c === "ok" || st.c === "rischio") && datiVecchi()){
+      var agg = NAVI && NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
+      return { c: "conferma", t: "Da confermare",
+               d: "All'ultimo aggiornamento (" + quandoDato(agg) + ") l'AIS la vedeva ferma in banchina, ma i dati sono fermi da " +
+                  testoEta(etaDati()) + ": potrebbe essere già partita. Controlla su VesselFinder prima di andare." };
+    }
+    return st;
+  }
+  function statoNaveDaiDati(n, V){
     /* Una nave conta e si disegna sulla mappa solo se l'AIS la vede davvero ferma in banchina.
        Tutte le altre (in arrivo, che se ne vanno, solo previste dal giornale) stanno nell'elenco
        con il loro stato, ma non sulla banchina e non nel conteggio. */
@@ -1715,13 +1732,28 @@ window.avviaApp = function(){
     return crypto.subtle.decrypt({ name: "AES-GCM", iv: daB64(obj.iv) }, k, daB64(obj.ct))
       .then(function(buf){ return JSON.parse(new TextDecoder().decode(buf)); });
   }
-  var caricando = false;
+  /* L'ultimo file delle navi scaricato resta sul telefono (cifrato com'e'), una copia sola: senza segnale (nei
+     terminal capita) l'app mostra quella, con l'avviso e l'ora dei dati, invece di "Previsioni non disponibili". */
+  var CH_COPIA_NAVI = "porto_navi_copia_v1";
+  var caricando = false, naviSenzaSegnale = false;
   function caricaNavi(){
     if(caricando) return;
     caricando = true;
     var fonte = window.NAVI_CIFRATE ? Promise.resolve(window.NAVI_CIFRATE)
       : fetch("navi.enc.json?t=" + Date.now(), { cache: "no-store" }).then(function(r){
-          if(!r.ok) throw new Error("http " + r.status); return r.json(); });
+          if(!r.ok) throw new Error("http " + r.status); return r.text();
+        }).then(function(testo){
+          var o = JSON.parse(testo);
+          try{ localStorage.setItem(CH_COPIA_NAVI, testo); }catch(e){}
+          naviSenzaSegnale = false;
+          return o;
+        }).catch(function(e){
+          var copia = null;
+          try{ copia = localStorage.getItem(CH_COPIA_NAVI); }catch(e2){}
+          if(!copia) throw e;
+          naviSenzaSegnale = true;
+          return JSON.parse(copia);
+        });
     fonte.then(apriCifrate).then(function(d){
       NAVI = d; naviErrore = "";
       // le navi che non si visitano ma sono ferme alle nostre banchine seguono le altre (con il motivo)
@@ -1760,7 +1792,7 @@ window.avviaApp = function(){
     NAVI.navi.forEach(function(n){
       var st = statoNave(n, V);
       // sulla banchina solo le navi che l'AIS vede ferme li': da visitare (ok, rischio) o da non visitare (nv)
-      if(st.c !== "ok" && st.c !== "rischio" && st.c !== "nv") return;
+      if(st.c !== "ok" && st.c !== "rischio" && st.c !== "nv" && st.c !== "conferma") return;
       var tt = trova(n.dove.terminal); if(!tt || !agibile(tt)) return;
       var tr = trattoDi(n); if(!tr) return;
       var L = (Number(n.loa) || 150) / M_UNITA, W = (Number(n.larg) || 25) / M_UNITA;
@@ -1892,29 +1924,37 @@ window.avviaApp = function(){
     disegnaNavi(V);
     aggiornaVista();
     // riga sulle schede dei terminal e pillola sulla mappa
-    var conta = {}, tot = 0;
+    var conta = {}, tot = 0, vecchi = datiVecchi();
+    var cosa = vecchi ? function(k){ return k === 1 ? " nave da confermare" : " navi da confermare"; }
+                      : function(k){ return k === 1 ? " nave da visitare" : " navi da visitare"; };
     if(NAVI) NAVI.navi.forEach(function(n){
       var tt = trova(n.dove.terminal); if(!tt || !agibile(tt)) return;
       var c = statoNave(n, V).c;
-      if((c === "ok" || c === "rischio") && !visitata(n)){ conta[n.dove.terminal] = (conta[n.dove.terminal] || 0) + 1; tot++; }
+      if((c === "ok" || c === "rischio" || c === "conferma") && !visitata(n)){ conta[n.dove.terminal] = (conta[n.dove.terminal] || 0) + 1; tot++; }
     });
     tutti.forEach(function(t){
       var r = carosello.querySelector('.card[data-id="' + t.id + '"] .navi-riga');
       if(!r) return;
       var k = conta[t.id] || 0;
       r.hidden = !k || !agibile(t);
-      r.innerHTML = ICONA_NAVE + "<span>" + k + (k === 1 ? " nave da visitare" : " navi da visitare") + " alle " + hhmm(V) + "</span>";
+      r.innerHTML = ICONA_NAVE + "<span>" + k + cosa(k) + (vecchi ? "" : " alle " + hhmm(V)) + "</span>";
     });
     var pill = document.getElementById("pillNavi");
     pill.hidden = !NAVI;
-    var vecchi = datiVecchi();
     pill.classList.toggle("vecchio", vecchi);
-    pill.innerHTML = ICONA_NAVE + "<span>" + tot + (tot === 1 ? " nave da visitare" : " navi da visitare") + " alle " + hhmm(V) +
-                     (vecchi ? " · dati di " + testoEta(etaDati()) + " fa" : "") + "</span>";
+    pill.innerHTML = ICONA_NAVE + "<span>" + (vecchi ? "Dati di " + testoEta(etaDati()) + " fa · " + tot + cosa(tot)
+                                                      : tot + cosa(tot) + " alle " + hhmm(V)) +
+                     (naviSenzaSegnale ? " · senza segnale" : "") + "</span>";
     aggiornaConteggioOggi(V);
-    if(tab === "navi" || tab === "oggi") disegnaPannello(V);
+    // mentre si scrive il nome nel campo delle visite il pannello non si ridisegna (si perderebbe quello che si scrive)
+    var scrive = document.activeElement && document.activeElement.id === "nomeVisite";
+    if((tab === "navi" || tab === "oggi") && !scrive) disegnaPannello(V);
     if(schedaNave !== null && scheda.classList.contains("on") && document.getElementById("btChiudi")){
-      var sc = scheda.scrollTop; apriNave(schedaNave); scheda.scrollTop = sc;
+      var iN = trovaNave(schedaNave);
+      if(iN < 0){
+        var via = schedaNave.nome; schedaNave = null; chiudi();
+        avvisa(via + " non è più nell'elenco: forse è partita.", null);
+      }else{ var sc = scheda.scrollTop; apriNave(iN); scheda.scrollTop = sc; }
     }
   }
 
@@ -1932,6 +1972,9 @@ window.avviaApp = function(){
       h += '<div class="nota attenzione" style="margin:0 0 10px">Il giornale è del <b>' + esc(giornoEsteso(NAVI.data)) +
            '</b>: quello di oggi non è ancora arrivato. Gli orari valgono per quel giorno.</div>';
     var agg = NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
+    if(naviSenzaSegnale)
+      h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Senza segnale.</b> Mostro gli ultimi dati salvati su questo telefono ' +
+           '(aggiornati ' + esc(quandoDato(agg)) + '). Riprovo da solo appena torna la rete.</div>';
     if(datiVecchi())
       h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Dati non aggiornati da ' + testoEta(etaDati()) + '.</b> Ultimo aggiornamento ' +
            esc(quandoDato(agg)) + '. Le navi possono essere già partite o arrivate: controlla su VesselFinder.</div>';
@@ -1953,7 +1996,7 @@ window.avviaApp = function(){
       return;
     }
 
-    var conti = { ok: 0, rischio: 0, avvicina: 0, prevista: 0, fatte: 0 };
+    var conti = { ok: 0, rischio: 0, conferma: 0, avvicina: 0, prevista: 0, fatte: 0 }, vecchi = datiVecchi();
     var gruppi = {}, trovate = {};
     NAVI.navi.forEach(function(n){
       if(soloOggi){
@@ -1970,21 +2013,22 @@ window.avviaApp = function(){
     });
     if(soloOggi) h += '<p class="pn-info">Le navi che hai scelto per oggi, con lo stato all\'orario della visita. La scelta si azzera a mezzanotte.</p>';
     h += '<div class="riepilogo">' +
-         '<div><b>' + conti.ok + '</b><span>In tempo</span></div>' +
-         '<div><b>' + conti.rischio + '</b><span>A rischio</span></div>' +
+         (vecchi ? '<div><b>' + conti.conferma + '</b><span>Da confermare</span></div>'
+                 : '<div><b>' + conti.ok + '</b><span>In tempo</span></div>' +
+                   '<div><b>' + conti.rischio + '</b><span>A rischio</span></div>') +
          '<div><b>' + (conti.avvicina + conti.prevista) + '</b><span>Non ancora qui</span></div>' +
          '<div><b>' + conti.fatte + '</b><span>Visitate</span></div></div>';
 
-    var ordine = { ok: 0, rischio: 1, avvicina: 2, prevista: 3, rada: 4, uscita: 5, nv: 6, partita: 7 };
+    var ordine = { ok: 0, conferma: 0, rischio: 1, avvicina: 2, prevista: 3, rada: 4, uscita: 5, nv: 6, partita: 7 };
     var senza = [];
     tutti.forEach(function(t){
       if(!soloOggi && !agibile(t)) return;
       var g = gruppi[t.id];
       if(!g){ if(!soloOggi) senza.push(t.nome); return; }
       g.sort(function(a, b){ return (visitata(a.n) - visitata(b.n)) || (ordine[a.st.c] - ordine[b.st.c]); });
-      var utili = g.filter(function(o){ return (o.st.c === "ok" || o.st.c === "rischio") && !visitata(o.n); }).length;
+      var utili = g.filter(function(o){ return (o.st.c === "ok" || o.st.c === "rischio" || o.st.c === "conferma") && !visitata(o.n); }).length;
       h += '<section class="gruppo"><h3><span class="pastiglia" style="background:' + t.colore + '"></span>' + esc(t.nome) +
-           '<span class="n">' + utili + ' da visitare</span></h3>';
+           '<span class="n">' + utili + (vecchi ? ' da confermare' : ' da visitare') + '</span></h3>';
       g.forEach(function(o){ h += cartaNave(o.n, o.st); });
       h += '</section>';
     });
@@ -2004,6 +2048,7 @@ window.avviaApp = function(){
     h += '<div class="legenda-stati">' +
          '<div><span class="stato-n scelta-leg">★ Stella</span>tocca la stella per segnare le navi che visiti oggi: le ritrovi nella scheda «Navi di oggi»</div>' +
          '<div><span class="stato-n ok">In tempo</span>l\'AIS la vede ferma in banchina e ci resta fino all\'orario della visita</div>' +
+         '<div><span class="stato-n conferma">Da confermare</span>i dati non si aggiornano da oltre 45 minuti: era ferma in banchina all\'ultimo aggiornamento, ma potrebbe essere partita</div>' +
          '<div><span class="stato-n rischio">A rischio</span>ferma in banchina, ma parte vicino all\'orario della visita o l\'orario non è preciso</div>' +
          '<div><span class="stato-n avvicina">In avvicinamento</span>l\'AIS la vede arrivare: non è ancora in banchina, non è sulla mappa né nel conteggio</div>' +
          '<div><span class="stato-n prevista">Non ancora in banchina</span>la dà il giornale ma l\'AIS non la vede ferma in banchina (non è sulla mappa né nel conteggio)</div>' +
@@ -2033,7 +2078,7 @@ window.avviaApp = function(){
     var nonVisita = st.c === "nv";
     var spenta = st.c === "partita" || st.c === "prevista" || st.c === "rada" || st.c === "uscita" || nonVisita || fatta;
     var a = oraN(n, "arrivo"), p = oraN(n, "partenza");
-    var sullaMappa = (st.c === "ok" || st.c === "rischio" || nonVisita) && trattoDi(n);
+    var sullaMappa = (st.c === "ok" || st.c === "rischio" || st.c === "conferma" || nonVisita) && trattoDi(n);
     return '<div class="nv' + (spenta ? " spenta" : "") + (fatta ? " fatta" : "") + (!nonVisita && chiaveScelta(n) ? " scelta" : "") + '">' +
       '<div class="su"><h4>' + esc(n.nome) + '</h4><span class="stato-n ' + st.c + '">' + st.t + '</span>' +
       (nonVisita ? '' : bottoneStella(n)) + '</div>' +
@@ -2118,10 +2163,24 @@ window.avviaApp = function(){
     document.getElementById("btChiudi").addEventListener("click", function(){ chiudi(); });
     collegaBottoniVisita(scheda);
     collegaStelle(scheda);
-    schedaNave = i;
+    schedaNave = idNave(n);
     preparaTrascinamento();
   }
+  /* La scheda aperta si ricorda la nave (IMO, MMSI, nome), non il suo posto nell'elenco: quando arrivano dati
+     nuovi l'elenco puo' cambiare ordine (una nave partita, una arrivata) e con il posto la scheda mostrava un'altra
+     nave, con il suo tasto "Visitata". */
   var schedaNave = null;
+  function idNave(n){
+    return { imo: /^\d{7}$/.test(n.imo || "") ? n.imo : "", mmsi: n.mmsi || "", chiave: chiaveNave(n.nome, ""), nome: n.nome };
+  }
+  function trovaNave(id){
+    if(!NAVI || !id) return -1;
+    var l = NAVI.navi, i;
+    if(id.imo) for(i = 0; i < l.length; i++) if(l[i].imo === id.imo) return i;
+    if(id.mmsi) for(i = 0; i < l.length; i++) if(l[i].mmsi === id.mmsi) return i;
+    for(i = 0; i < l.length; i++) if(chiaveNave(l[i].nome, "") === id.chiave && !(id.imo && /^\d{7}$/.test(l[i].imo || ""))) return i;
+    return -1;
+  }
 
 
   /* ================= ARRIVI: QUANTO E' SICURO? =================
@@ -2280,16 +2339,24 @@ window.avviaApp = function(){
     var trovata = null;
     tutte.forEach(function(v){
       if(annullate.indexOf(v.id) >= 0) return;
-      if(chiaveNave(v.nave, v.imo) !== k && !(n.imo && v.imo === n.imo)) return;
+      if(!stessaNaveVisita(v, n, k)) return;
       if(v.data >= dal && (!trovata || v.data + v.ora > trovata.data + trovata.ora)) trovata = v;
     });
     return trovata;
+  }
+  /* La visita e' di questa nave? Con due IMO decide l'IMO; se uno manca (la nave e' stata segnata quando il giornale
+     non aveva letto l'IMO, che poi e' arrivato dall'AIS) decide il nome. */
+  function stessaNaveVisita(v, n, k){
+    var iv = /^\d{7}$/.test(String(v.imo || "")), inn = /^\d{7}$/.test(String(n.imo || ""));
+    if(iv && inn) return String(v.imo) === String(n.imo);
+    return chiaveNave(v.nave, v.imo) === k || chiaveNave(v.nave, "") === chiaveNave(n.nome, "");
   }
   function oggiDi(d){ return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
   function visitata(n){ return !!visitaSosta(n); }
   /* l'ultima visita in una sosta precedente (es. "visitata 4 mesi fa") */
   function visitaPrecedente(n){
-    var u = (VISITE.ultime || {})[chiaveNave(n.nome, n.imo)];
+    var ul = VISITE.ultime || {};
+    var u = ul[chiaveNave(n.nome, n.imo)] || ul[chiaveNave(n.nome, "")];
     if(!u || !u.data || u.data >= inizioSosta(n)) return null;
     return u;
   }
@@ -2367,7 +2434,7 @@ window.avviaApp = function(){
       b.addEventListener("click", function(e){ e.stopPropagation(); annullaVisita(b.getAttribute("data-annulla")); });
     });
   }
-  window.addEventListener("online", function(){ inviaCoda(); });
+  window.addEventListener("online", function(){ inviaCoda(); caricaNavi(); });
 
   function avviaNavi(){
     caricaNavi();
@@ -2375,7 +2442,7 @@ window.avviaApp = function(){
     setInterval(function(){ if(document.visibilityState === "visible"){ inviaCoda(); caricaVisite(); } }, 5 * 60 * 1000);
     // ogni 10 minuti si riprende il file (il server lo aggiorna ogni 15) e ogni minuto si ricalcola
     setInterval(function(){ if(document.visibilityState === "visible") caricaNavi(); }, 10 * 60 * 1000);
-    setInterval(function(){ if(oraScelta === null) aggiornaNavi(); }, 60 * 1000);
+    setInterval(function(){ if(document.visibilityState === "visible") aggiornaNavi(); }, 60 * 1000);
     document.addEventListener("visibilitychange", function(){
       if(document.visibilityState === "visible"){ caricaNavi(); inviaCoda(); caricaVisite(); }
     });

@@ -574,60 +574,73 @@ class GiriDellaNotte(unittest.TestCase):
 
 
 class OrarioDeiGiri(unittest.TestCase):
-    """strumenti/orario_giro.sh: di giorno il ciclo da 15 minuti, di notte un giro alle 23, alle 3 e alle 6,
-    anche se GitHub ritarda o salta l'esecuzione prevista."""
-    SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orario_giro.sh")
+    """strumenti/orario_giro.py: di giorno un giro ogni 15 minuti (7:00-20:45), di notte uno alle 23, alle 3 e alle 6.
+    Un giro saltato o in ritardo si fa appena possibile, uno gia' fatto non si rifa'. L'esecuzione (staffetta) aspetta
+    l'orario del giro: non dipende piu' dalle partenze programmate di GitHub."""
 
-    def decidi(self, giorno, ora, ultimo=None, evento="schedule"):
-        """ultimo: 'AAAA-MM-GG HH:MM' dell'ultimo aggiornamento dei dati (ora di Genova), o None se non si sa"""
-        import subprocess
-        def epoca(g, o):
-            return str(int(quando(g, o).timestamp()))
-        env = dict(os.environ, EVENTO=evento, ADESSO_PROVA=epoca(giorno, ora))
-        env.pop("ULTIMO_PROVA", None)
-        env["ULTIMO_PROVA"] = epoca(*ultimo.split()) if ultimo else ""
-        r = subprocess.run(["bash", self.SCRIPT], capture_output=True, text=True, env=env, timeout=20)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        return dict(riga.split("=") for riga in r.stdout.split())
+    @staticmethod
+    def attesa(giorno, ora, ultimo=None):
+        """minuti da aspettare. ultimo: 'AAAA-MM-GG HH:MM' di fine dell'ultimo giro (ora di Genova) o None"""
+        import orario_giro as O
+        u = quando(*ultimo.split()) if ultimo else None
+        return O.attesa(quando(giorno, ora), u) / 60
 
-    def test_di_giorno_ciclo_da_quindici_minuti(self):
-        for ora in ("07:05", "12:35", "20:05", "20:55"):
-            self.assertEqual(self.decidi("2026-10-28", ora, "2026-10-28 06:20"), {"vai": "si", "un_giro": "no"}, ora)
+    def test_di_giorno_un_giro_ogni_quindici_minuti(self):
+        self.assertEqual(self.attesa("2026-10-28", "12:31", "2026-10-28 12:11"), 0)          # quello delle 12:30 e' dovuto
+        self.assertAlmostEqual(self.attesa("2026-10-28", "12:41", "2026-10-28 12:41"), 4, delta=0.1)   # fatto: alle 12:45
+        self.assertEqual(self.attesa("2026-10-28", "07:00", "2026-10-28 06:21"), 0)          # il primo del mattino
+        self.assertAlmostEqual(self.attesa("2026-10-28", "07:13", "2026-10-28 07:13"), 2, delta=0.1)
 
-    def test_la_sera_dopo_le_21_non_si_fa_niente(self):
-        for ora in ("21:05", "22:05"):
-            self.assertEqual(self.decidi("2026-10-28", ora, "2026-10-28 21:00")["vai"], "no", ora)
+    def test_la_sera_dopo_le_20_45_si_aspetta_le_23(self):
+        self.assertAlmostEqual(self.attesa("2026-10-28", "20:56", "2026-10-28 20:56"), 124, delta=0.1)
+        self.assertAlmostEqual(self.attesa("2026-10-28", "21:30", "2026-10-28 20:56"), 90, delta=0.1)
 
     def test_un_giro_alle_23_alle_3_alle_6(self):
-        un_giro = {"vai": "si", "un_giro": "si"}
-        self.assertEqual(self.decidi("2026-10-28", "23:05", "2026-10-28 21:00"), un_giro)
-        self.assertEqual(self.decidi("2026-10-29", "03:05", "2026-10-28 23:25"), un_giro)
-        self.assertEqual(self.decidi("2026-10-29", "06:05", "2026-10-29 03:25"), un_giro)
+        self.assertEqual(self.attesa("2026-10-28", "23:00", "2026-10-28 20:56"), 0)
+        self.assertAlmostEqual(self.attesa("2026-10-28", "23:21", "2026-10-28 23:21"), 219, delta=0.1)   # alle 3
+        self.assertEqual(self.attesa("2026-10-29", "03:00", "2026-10-28 23:21"), 0)
+        self.assertAlmostEqual(self.attesa("2026-10-29", "03:21", "2026-10-29 03:21"), 159, delta=0.1)   # alle 6
+        self.assertEqual(self.attesa("2026-10-29", "06:00", "2026-10-29 03:21"), 0)
+        self.assertAlmostEqual(self.attesa("2026-10-29", "06:21", "2026-10-29 06:21"), 39, delta=0.1)    # alle 7
 
     def test_una_volta_fatto_il_giro_non_si_rifa(self):
-        for g, o, ultimo in (("2026-10-28", "23:35", "2026-10-28 23:25"), ("2026-10-29", "00:05", "2026-10-28 23:25"),
-                             ("2026-10-29", "02:05", "2026-10-28 23:25"), ("2026-10-29", "04:05", "2026-10-29 03:25"),
-                             ("2026-10-29", "05:05", "2026-10-29 03:25"), ("2026-10-29", "06:35", "2026-10-29 06:20")):
-            self.assertEqual(self.decidi(g, o, ultimo)["vai"], "no", (g, o))
+        for g, o, ultimo in (("2026-10-28", "23:35", "2026-10-28 23:21"), ("2026-10-29", "00:05", "2026-10-28 23:21"),
+                             ("2026-10-29", "02:05", "2026-10-28 23:21"), ("2026-10-29", "04:05", "2026-10-29 03:21"),
+                             ("2026-10-29", "05:05", "2026-10-29 03:21"), ("2026-10-29", "06:35", "2026-10-29 06:21")):
+            self.assertGreater(self.attesa(g, o, ultimo), 0, (g, o))
 
-    def test_se_github_ritarda_o_salta_il_giro_si_recupera_all_ora_dopo(self):
-        self.assertEqual(self.decidi("2026-10-29", "04:05", "2026-10-28 23:25")["vai"], "si")     # il giro delle 3 e' saltato
-        self.assertEqual(self.decidi("2026-10-29", "05:05", "2026-10-28 23:25")["vai"], "si")
-        self.assertEqual(self.decidi("2026-10-29", "00:05", "2026-10-28 21:00")["vai"], "si")     # saltato quello delle 23
-        self.assertEqual(self.decidi("2026-10-29", "06:50", "2026-10-29 03:25")["vai"], "si")     # arrivato tardi
+    def test_un_giro_saltato_o_in_ritardo_si_fa_subito(self):
+        self.assertEqual(self.attesa("2026-10-29", "04:05", "2026-10-28 23:21"), 0)    # il giro delle 3 e' saltato
+        self.assertEqual(self.attesa("2026-10-29", "00:05", "2026-10-28 20:56"), 0)    # saltato quello delle 23
+        self.assertEqual(self.attesa("2026-10-29", "06:50", "2026-10-29 03:21"), 0)    # arrivato tardi
+        self.assertEqual(self.attesa("2026-10-28", "14:52", "2026-10-28 14:20"), 0)    # di giorno: quello delle 14:45
 
-    def test_senza_storia_si_fa_il_giro(self):
-        self.assertEqual(self.decidi("2026-10-29", "01:05", None), {"vai": "si", "un_giro": "si"})
+    def test_senza_storia_o_avvio_a_mano_si_fa_subito(self):
+        self.assertEqual(self.attesa("2026-10-29", "01:05", None), 0)
+        self.assertEqual(self.attesa("2026-10-28", "14:00", None), 0)
 
-    def test_avvio_a_mano(self):
-        self.assertEqual(self.decidi("2026-10-28", "14:00", "2026-10-28 13:55", "workflow_dispatch"), {"vai": "si", "un_giro": "no"})
-        self.assertEqual(self.decidi("2026-10-29", "02:00", "2026-10-29 01:55", "workflow_dispatch"), {"vai": "si", "un_giro": "si"})
+    def test_la_staffetta_di_notte_aspetta_l_orario(self):
+        """L'esecuzione che parte all'1 (passaggio di testimone) non rifa' il giro delle 23: aspetta le 3."""
+        self.assertAlmostEqual(self.attesa("2026-10-29", "01:00", "2026-10-28 23:21"), 120, delta=0.1)
 
     def test_il_cambio_dell_ora_legale_non_confonde(self):
-        # notte del 25/10/2026: le 3 vengono due volte. Il giro delle 3 si fa, quello delle 6 pure.
-        self.assertEqual(self.decidi("2026-10-25", "04:05", "2026-10-24 23:25")["vai"], "si")
-        self.assertEqual(self.decidi("2026-10-25", "06:05", "2026-10-25 03:40")["vai"], "si")
-        self.assertEqual(self.decidi("2026-10-25", "05:05", "2026-10-25 03:40")["vai"], "no")
+        # notte del 25/10/2026: le 2-3 vengono due volte. Il giro delle 3 si fa, quello delle 6 pure.
+        self.assertEqual(self.attesa("2026-10-25", "04:05", "2026-10-24 23:21"), 0)
+        self.assertEqual(self.attesa("2026-10-25", "06:05", "2026-10-25 03:40"), 0)
+        self.assertGreater(self.attesa("2026-10-25", "05:05", "2026-10-25 03:40"), 0)
+        self.assertEqual(self.attesa("2026-03-29", "03:05", "2026-03-28 23:21"), 0)    # notte dell'ora legale
+        self.assertAlmostEqual(self.attesa("2026-03-29", "03:21", "2026-03-29 03:21"), 159, delta=0.1)
+
+    def test_da_riga_di_comando(self):
+        import subprocess
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orario_giro.py")
+        adesso, ultimo = int(quando("2026-10-28", "12:41").timestamp()), int(quando("2026-10-28", "12:41").timestamp())
+        r = subprocess.run([sys.executable, "-I", script, "attesa", str(ultimo), str(adesso)], capture_output=True, text=True, timeout=20)
+        self.assertEqual(r.stdout.strip(), "240")
+        r = subprocess.run([sys.executable, "-I", script, "attesa", "0", str(adesso)], capture_output=True, text=True, timeout=20)
+        self.assertEqual(r.stdout.strip(), "0")
+        r = subprocess.run([sys.executable, "-I", script, "descrivi", str(ultimo), str(adesso)], capture_output=True, text=True, timeout=20)
+        self.assertIn("12:45", r.stdout)
 
 
 class DiagnosiDelGiro(unittest.TestCase):
@@ -864,6 +877,207 @@ class MemoriaTraGiorni(unittest.TestCase):
         A.pulizia(d, quando("2026-10-27", "20:50"))
         nomi = sorted(n["nome"] for n in d["navi"])
         self.assertEqual(nomi, ["ALDEBARAN", "BERNARDO", "CAPRICORN"])      # D e' partita alle 12
+
+
+class NaviGemelle(unittest.TestCase):
+    """Navi con nomi quasi uguali (ARGO I e ARGO II, NORDIC ANNE e NORDIC ANNA) non sono la stessa nave.
+    Controllo del 28/10: la nave del giornale prendeva IMO e posizione della gemella, due navi si fondevano in una
+    e la conferma di partenza della gemella dal sito si attaccava alla nostra."""
+    T = quando("2026-10-28", "10:05")
+
+    def test_i_numeri_nel_nome_distinguono(self):
+        for a, b in (("ARGO I", "ARGO II"), ("XIN YA ZHOU 1", "XIN YA ZHOU 2"), ("STAR ATLANTIC", "STAR ATLANTIS 2")):
+            self.assertFalse(A.simili(a, b), (a, b))
+        for a, b in (("JOLLY GIADA", "JOLLY GlADA"), ("MSC RITA V", "MSC RITA V"), ("SEASPAN BRIGHTNESS", "SEASPAN BRIGHTNES")):
+            self.assertTrue(A.simili(a, b), (a, b))                           # letture sbagliate del giornale: stessa nave
+
+    def test_con_due_imo_validi_decide_l_imo(self):
+        self.assertFalse(A.stessa_nave("NORDIC ANNE", "9074729", "NORDIC ANNA", "9395044"))
+        self.assertTrue(A.stessa_nave("NORDIC ANNE", "9074729", "NORDIC ANNE", "9395044"))   # stesso nome: IMO letto male
+        self.assertTrue(A.stessa_nave("NORDIC ANNE", "9074729", "NORDIC ANNA", ""))         # un IMO manca: decide il nome
+        self.assertTrue(A.stessa_nave("NORDIC ANNE", "1234568", "NORDIC ANNA", "9395044"))  # IMO non valido: decide il nome
+
+    def test_la_nave_del_giornale_non_prende_la_gemella_dell_ais(self):
+        d = {"navi": [{"nome": "NORDIC ANNE", "imo": "9074729", "tipo": "BULK", "fonti": ["giornale"],
+                       "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente", "in_rada": False}}],
+             "statici": {"111": {"imo": "9395044", "nome": "NORDIC ANNA", "lung": 190, "tipo": 70}},
+             "registro": {"111": posizione(self.T)}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        n = d["navi"][0]
+        self.assertEqual((n["nome"], n["imo"]), ("NORDIC ANNE", "9074729"))
+        self.assertNotIn("mmsi", n)
+        self.assertNotIn("ais", n)
+        # la gemella vera, ferma in banchina, entra per conto suo (solo AIS)
+        self.assertIn("NORDIC ANNA", [x["nome"] for x in d["navi"]])
+
+    def test_un_abbinamento_sbagliato_di_prima_si_toglie(self):
+        d = {"navi": [{"nome": "NORDIC ANNE", "imo": "9074729", "mmsi": "111", "tipo": "BULK", "fonti": ["giornale"],
+                       "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente", "in_rada": False}}],
+             "statici": {"111": {"imo": "9395044", "nome": "NORDIC ANNA", "lung": 190, "tipo": 70},
+                         "222": {"imo": "9074729", "nome": "NORDIC ANNE", "lung": 190, "tipo": 70}},
+             "registro": {"111": posizione(self.T), "222": posizione(self.T, lat=44.4002)}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        n = next(x for x in d["navi"] if x["imo"] == "9074729")
+        self.assertEqual(n["mmsi"], "222")                                    # ora ha la sua identita' AIS
+        self.assertTrue(n["ais"]["ormeggiata"])
+
+    def test_due_navi_gemelle_del_giornale_non_si_fondono(self):
+        d = {"navi": [{"nome": "ARGO I", "imo": "9074729", "tipo": "BULK", "giorno": "2026-10-27", "in_porto_dal": "2026-10-27",
+                       "dove": {"terminal": "rinfuse"}, "fonti": ["giornale"], "partenza": "18.00", "partenza_giorno": "2026-10-28"}]}
+        nuove = [{"nome": "ARGO II", "imo": "9395044", "tipo": "BULK", "dove": {"terminal": "rinfuse"}, "arrivo": "20.00",
+                  "arrivo_giorno": "2026-10-28", "arrivo_g": "2026-10-28"}]
+        A.unisci_giornale(d, nuove, "2026-10-28", quando("2026-10-28", "09:00"))
+        self.assertEqual(sorted(n["nome"] for n in d["navi"]), ["ARGO I", "ARGO II"])
+
+    def test_la_conferma_del_sito_va_solo_alla_nave_giusta(self):
+        d = {"navi": [{"nome": "ARGO I", "imo": "9074729"}, {"nome": "NORDIC ANNE", "imo": "9395044"}]}
+        A.applica_conferme(d, [{"tipo": "partenza", "nave": "ARGO II", "ormeggio": "RUBATTINO", "giorno": "2026-10-28",
+                                "ora": "10.00", "conf": "CONF"},
+                               {"tipo": "partenza", "nave": "NORDIC ANNA", "ormeggio": "RUBATTINO", "giorno": "2026-10-28",
+                                "ora": "11.00", "conf": "CONF"}])
+        self.assertNotIn("conferma", d["navi"][0])
+        self.assertNotIn("conferma", d["navi"][1])                            # 0,9 non basta: ANNE non e' ANNA
+        A.applica_conferme(d, [{"tipo": "arrivo", "nave": "ARGO I", "ormeggio": "RUBATTINO", "giorno": "2026-10-28",
+                                "ora": "12.00", "conf": "CONF"}])
+        self.assertEqual(d["navi"][0]["conferma"]["ora"], "12.00")
+
+    def test_una_esclusa_non_si_porta_dietro_la_gemella(self):
+        d = {"escluse": [{"nome": "BOMAR RIGEL", "imo": "9074729", "mmsi": "", "motivo": "nave chemical"}]}
+        self.assertFalse(A.e_esclusa(d, "9395044", "BOMAR RIGEL 2"))
+        self.assertFalse(A.e_esclusa(d, "9395044", "BOMAR RIGEI"))           # altro IMO valido, altro nome
+        self.assertTrue(A.e_esclusa(d, "", "BOMAR RIGEL"))
+
+
+class TipoAisEGiornale(unittest.TestCase):
+    """Il tipo AIS 80-89 (cisterna) lo imposta l'equipaggio, a volte male: esclude solo se il giornale non si legge.
+    Le gasiere (GAS) si visitano (Mele, 28/10)."""
+
+    def test_il_tipo_del_giornale_vince(self):
+        for tipo in ("CONT.", "BULK", "RO/RO", "GAS", "CARGO", "GEN.CARGO", "REEFER"):
+            n = {"nome": "BETA", "imo": "9074729", "mmsi": "222", "tipo": tipo, "fonti": ["giornale"]}
+            self.assertIsNone(A.motivo_esclusione(n, {"statici": {"222": {"tipo": 80}}}), tipo)
+
+    def test_col_tipo_illeggibile_decide_l_ais(self):
+        for tipo in ("", "MM.", "X7"):
+            n = {"nome": "BETA", "imo": "9074729", "mmsi": "222", "tipo": tipo, "fonti": ["giornale"]}
+            self.assertTrue(A.motivo_esclusione(n, {"statici": {"222": {"tipo": 84}}}).startswith("cisterna (tipo AIS"), tipo)
+
+    def test_le_gasiere_del_giornale_entrano(self):
+        navi, escluse = A.navi_dal_giornale([riga("GAMMA GAS", "9074729", "GAS", "ARRIVI", "10.00")], "2026-10-28")
+        self.assertEqual([n["nome"] for n in navi], ["GAMMA GAS"])
+        self.assertEqual(escluse, [])
+
+    def test_le_esclusioni_fatte_con_la_regola_vecchia_si_tolgono(self):
+        adesso = quando("2026-10-28", "17:00")
+        d = {"navi": [], "statici": {}, "escluse": [
+            {"nome": "DELTA", "imo": "9074729", "motivo": "cisterna (tipo AIS, il giornale lo scrive CONT.)", "quando": adesso.isoformat()},
+            {"nome": "EPSILON", "imo": "9395044", "motivo": "cisterna (tipo AIS, il giornale lo scrive illeggibile)", "quando": adesso.isoformat()},
+            {"nome": "ZETA", "imo": "9000019", "motivo": "nave chemical", "quando": adesso.isoformat()}]}
+        A.escludi_non_visitabili(d, adesso)
+        self.assertEqual(sorted(e["nome"] for e in d["escluse"]), ["EPSILON", "ZETA"])
+
+
+class SostaESpostamenti(unittest.TestCase):
+    """Una nave gia' ferma in banchina che il giornale di domani sposta (MOVIMENTI) non 'riparte': la visita di oggi
+    deve continuare a valere. Una nave che torna davvero in porto, invece, ricomincia la sosta."""
+
+    def test_spostamento_di_una_nave_in_banchina_tiene_la_sosta(self):
+        v = {"nome": "ALFA", "imo": "9074729", "tipo": "CONT.", "giorno": "2026-10-28", "in_porto_dal": "2026-10-27",
+             "dove": {"terminal": "sangiorgio", "molo": "Libia"}, "fonti": ["giornale"],
+             "visto_banchina": quando("2026-10-28", "15:00").isoformat()}
+        d = {"navi": [v]}
+        mov = dict(riga("ALFA", "9074729", "CONT.", "MOVIMENTI", "08.00", accosto="DA LIBIA PON. A SOMALIA LEV."))
+        navi, _ = A.navi_dal_giornale([mov], "2026-10-29")
+        A.unisci_giornale(d, navi, "2026-10-29", quando("2026-10-28", "15:05"))
+        n = d["navi"][0]
+        self.assertEqual(n["in_porto_dal"], "2026-10-27")
+        self.assertEqual((n["arrivo"], n["arrivo_giorno"]), ("08.00", "2026-10-29"))
+
+    def test_nave_vista_in_banchina_molto_tempo_fa_riparte_la_sosta(self):
+        v = {"nome": "ALFA", "imo": "9074729", "tipo": "CONT.", "giorno": "2026-10-20", "in_porto_dal": "2026-10-20",
+             "dove": {}, "fonti": ["memoria"], "visto_banchina": quando("2026-10-21", "10:00").isoformat()}
+        d = {"navi": [v]}
+        navi, _ = A.navi_dal_giornale([riga("ALFA", "9074729", "CONT.", "ARRIVI", "08.00")], "2026-10-29")
+        A.unisci_giornale(d, navi, "2026-10-29", quando("2026-10-28", "15:05"))
+        self.assertNotIn("in_porto_dal", d["navi"][0])
+
+
+class RicezionePrimaDelRegistro(unittest.TestCase):
+    """La ricezione si giudica sulle navi che i giri precedenti avevano sentito ferme nei moli, prima di mettere nel
+    registro quelle di questo giro (come fa main). Dopo una pausa lunga il riferimento e' vuoto: non si giudica."""
+    sera, mattina = quando("2026-10-28", "20:50"), quando("2026-10-29", "07:00")
+
+    def registro(self, quando_, n=8):
+        return {str(100 + i): posizione(quando_, lat=44.4005, lon=8.8999) for i in range(n)}
+
+    def test_dopo_una_pausa_lunga_la_ricezione_non_si_giudica(self):
+        d = {"registro": self.registro(self.sera), "aggiornato": self.sera.isoformat()}
+        sentite = {str(100 + i) for i in range(6)}
+        f = A.finestra_ricezione(d, self.mattina)
+        self.assertEqual(A.qualita_ricezione(d, sentite, self.mattina, f), (False, 0, 0))
+
+    def test_di_giorno_conta_chi_si_risente(self):
+        t = quando("2026-10-29", "10:00")
+        d = {"registro": self.registro(t - __import__("datetime").timedelta(minutes=15)),
+             "aggiornato": (t - __import__("datetime").timedelta(minutes=3)).isoformat()}
+        f = A.finestra_ricezione(d, t)
+        self.assertEqual(A.qualita_ricezione(d, {str(100 + i) for i in range(6)}, t, f), (True, 8, 6))
+        self.assertEqual(A.qualita_ricezione(d, {str(100 + i) for i in range(3)}, t, f), (False, 8, 3))
+
+
+class TitoloMezziDiga(unittest.TestCase):
+    """Le parole corte (DIGA, MEZZI) si riconoscono solo intere: NAVIGAZIONE e OBBLIGATORIO contengono 'IGA'
+    e prima facevano smettere di leggere il giornale."""
+
+    def test_titoli(self):
+        attese = {"MEZZI DIGA": "MEZZI DIGA", "MEZZIDIGA": "MEZZI DIGA", "MEZZl DlGA": "MEZZI DIGA",
+                  "MEZZI IMPIEGATI NUOVA DIGA": "MEZZI DIGA", "PREVISIONI DEL 29/10/2026": "PRINCIPALE",
+                  "VARIAZIONI": "VARIAZIONI", "AREA MULTEDO": "AREA MULTEDO", "AREA VOLTRI": "AREA VOLTRI",
+                  "NAVIGAZIONE": None, "PILOTAGGIO OBBLIGATORIO": None, "ARRIVI": None, "": None}
+        for testo, zona in attese.items():
+            self.assertEqual(L.zona_del_titolo(testo), zona, testo)
+
+
+class TaraturaPerNave(unittest.TestCase):
+    """Servono navi diverse per imparare un posto: una sola nave ferma due giorni non basta."""
+
+    def test_una_nave_non_basta(self):
+        d = {}
+        A.azzera_taratura_vecchia(d)
+        for _ in range(3):
+            A.impara(d, {"molo": "CANEPA", "punto": "testata"}, {"molo": "RONCO", "lato": "testata"}, "9074729")
+        self.assertIsNone(A.posto_imparato(d, {"molo": "CANEPA", "punto": "testata"}))
+        A.impara(d, {"molo": "CANEPA", "punto": "testata"}, {"molo": "RONCO", "lato": "testata"}, "9395044")
+        self.assertEqual(A.posto_imparato(d, {"molo": "CANEPA", "punto": "testata"}), ("RONCO", "testata"))
+
+    def test_la_taratura_vecchia_si_azzera_una_volta(self):
+        d = {"taratura": {"CANEPA|testata": {"RONCO|testata": 2}}, "taratura_giorni": {"x>y>2026-10-28": 1}}
+        A.azzera_taratura_vecchia(d)
+        self.assertEqual((d["taratura"], d["taratura_giorni"]), ({}, {}))
+        d["taratura"]["A|b"] = {"C|d": 1}
+        A.azzera_taratura_vecchia(d)
+        self.assertEqual(d["taratura"], {"A|b": {"C|d": 1}})
+
+
+class DatiPerIlTelefono(unittest.TestCase):
+    """Il telefono scarica solo quello che l'app mostra; la memoria del programma sta in stato.enc.json."""
+
+    def test_solo_i_campi_dell_app(self):
+        d = {"navi": [{"nome": "A"}], "non_visitare": [], "data": "2026-10-28", "giornali": ["2026-10-28"], "ais": True,
+             "aggiornato": "x", "esempio": False, "registro": {"1": {}}, "statici": {"1": {}}, "escluse": [], "taratura": {}}
+        self.assertEqual(sorted(A.dati_per_app(d)), ["aggiornato", "ais", "data", "esempio", "giornali", "navi", "non_visitare"])
+
+    def test_la_memoria_si_apre_dallo_stato_o_dai_dati_di_prima(self):
+        k = os.urandom(32)
+        with tempfile.TemporaryDirectory() as t:
+            stato, uscita = os.path.join(t, "stato.enc.json"), os.path.join(t, "navi.enc.json")
+            A.chiudi(k, {"navi": [], "registro": {"1": "vecchio"}}, uscita)
+            self.assertEqual(A.apri_stato(k, stato, uscita)["registro"], {"1": "vecchio"})   # prima volta: dai dati di prima
+            A.chiudi(k, {"navi": [], "registro": {"1": "nuovo"}}, stato)
+            self.assertEqual(A.apri_stato(k, stato, uscita)["registro"], {"1": "nuovo"})
+            open(stato, "w").write("rovinato")
+            self.assertEqual(A.apri_stato(k, stato, uscita)["registro"], {"1": "vecchio"})   # rovinato: non si riparte da zero
+            self.assertFalse(os.path.exists(stato + ".nuovo"))
 
 
 if __name__ == "__main__":

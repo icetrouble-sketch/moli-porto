@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Aggiorna le navi del giorno per l'app (gira in GitHub Actions ogni 15 minuti).
 
-1. Apre le navi gia' pubblicate (navi.enc.json) con il codice della mappa.
+1. Apre la memoria del giro prima (stato.enc.json; la prima volta navi.enc.json) con il codice della mappa.
 2. Se sul sito shipsinformationgenova.com c'e' un giornale della Capitaneria
    piu' recente, lo scarica, lo legge (OCR) e tiene arrivi e partenze dei
    terminal della mappa.
 3. Ascolta aisstream per qualche minuto e aggiunge la posizione reale delle
    navi: ormeggiata, in rada, in arrivo (con l'ora stimata).
-4. Cifra tutto di nuovo in navi.enc.json.
+4. Cifra di nuovo: in navi.enc.json solo quello che mostra l'app (e' il file che scarica il telefono),
+   in stato.enc.json tutta la memoria del programma (registro AIS, esclusioni, taratura...).
 
 Variabili d'ambiente: CODICE_MAPPA (obbligatoria), AISSTREAM_KEY (facoltativa).
 Uso: python3 strumenti/aggiorna_navi.py [--forza-giornale] [--pdf file.pdf]
@@ -84,11 +85,15 @@ def apri(k, percorso):
 
 
 def chiudi(k, dati, percorso):
+    """Cifra e scrive. Si scrive in un file accanto e poi lo si mette al posto giusto in un colpo solo: se il giro
+    si interrompe a meta' scrittura resta il file di prima, mai uno rovinato."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     iv = os.urandom(12)
     ct = AESGCM(k).encrypt(iv, json.dumps(dati, ensure_ascii=False).encode("utf-8"), None)
-    json.dump({"v": 1, "iv": base64.b64encode(iv).decode(), "ct": base64.b64encode(ct).decode()},
-              open(percorso, "w", encoding="utf-8"))
+    provvisorio = percorso + ".nuovo"
+    with open(provvisorio, "w", encoding="utf-8") as f:
+        json.dump({"v": 1, "iv": base64.b64encode(iv).decode(), "ct": base64.b64encode(ct).decode()}, f)
+    os.replace(provvisorio, percorso)
 
 
 # ---------------------------------------------------------------- giornale
@@ -389,11 +394,29 @@ def motivo_esclusione(n, dati):
     if ESCLUDI_CISTERNE and e_cisterna(tipo):
         return "cisterna (da confermare)"
     t = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or ""))
-    if ESCLUDI_CISTERNE and 80 <= t <= 89 and "giornale" in (n.get("fonti") or ["giornale"]):
+    # il tipo AIS (lo imposta l'equipaggio, a volte male) decide solo se il giornale non si legge: una nave che il
+    # giornale scrive CONT., BULK, RO/RO, GAS... resta, anche se l'AIS la dichiara cisterna
+    if ESCLUDI_CISTERNE and 80 <= t <= 89 and "giornale" in (n.get("fonti") or ["giornale"]) and not tipo_leggibile(tipo):
         return "cisterna (tipo AIS, il giornale lo scrive " + (tipo or "illeggibile") + ")"
     if tipo in ("RO/RO", "") and 60 <= t <= 69:
         return "ro-ro con passeggeri (tipo AIS: passeggeri)"
     return None
+
+
+# Tipi del giornale letti bene e che si visitano: per queste navi il tipo AIS non conta.
+# GAS (gasiere): si visitano, decisione di Mele del 28/10 ("per ora inseriscile").
+TIPI_VISITABILI = ("CONT.", "RO/RO", "BULK", "CARGO", "GEN.CARGO", "REEFER", "GAS")
+
+
+def tipo_leggibile(tipo):
+    return tipo in TIPI_VISITABILI
+
+
+def esclusione_superata(e):
+    """Esclusioni fatte con la regola di prima (fino al 28/10): una nave che il giornale scriveva con un tipo chiaro
+    (CONT., BULK, GAS...) era esclusa solo perche' l'AIS la dichiarava cisterna. Ora quelle navi si visitano."""
+    m = re.fullmatch(r"cisterna \(tipo AIS, il giornale lo scrive (.*)\)", e.get("motivo") or "")
+    return bool(m) and tipo_leggibile(m.group(1))
 
 
 def registra_esclusa(dati, n, motivo, adesso=None):
@@ -402,8 +425,7 @@ def registra_esclusa(dati, n, motivo, adesso=None):
     adesso = adesso or datetime.now(timezone.utc)
     lista = dati.setdefault("escluse", [])
     for e in lista:
-        if (n.get("imo") and e.get("imo") == n["imo"]) or (n.get("mmsi") and e.get("mmsi") == n["mmsi"]) \
-                or simili(e.get("nome"), n.get("nome")):
+        if (n.get("mmsi") and e.get("mmsi") == n["mmsi"]) or stessa_nave(e.get("nome"), e.get("imo"), n.get("nome"), n.get("imo")):
             e.update({k: v for k, v in (("imo", n.get("imo")), ("mmsi", n.get("mmsi")), ("tipo", n.get("tipo"))) if v})
             e["motivo"] = motivo
             e["quando"] = adesso.isoformat()
@@ -414,7 +436,8 @@ def registra_esclusa(dati, n, motivo, adesso=None):
 
 def e_esclusa(dati, imo, nome, mmsi=None):
     for e in dati.get("escluse", []):
-        if (imo and e.get("imo") == imo) or (mmsi and e.get("mmsi") == mmsi) or simili(e.get("nome"), nome):
+        if (mmsi and e.get("mmsi") == mmsi) or (imo and e.get("imo") == imo) \
+                or stessa_nave(e.get("nome"), e.get("imo"), nome, imo):
             return True
     return False
 
@@ -422,6 +445,10 @@ def e_esclusa(dati, imo, nome, mmsi=None):
 def escludi_non_visitabili(dati, adesso):
     """Toglie dall'elenco chemical e ro-ro con passeggeri (anche quelle gia' presenti
     da giri precedenti) e segna le ro-ro di cui non si sa ancora nulla."""
+    superate = [e for e in dati.get("escluse", []) if esclusione_superata(e)]
+    if superate:
+        log("non piu' escluse (il giornale ne scrive il tipo, l'AIS da solo non basta):", ", ".join(e.get("nome") or "?" for e in superate))
+        dati["escluse"] = [e for e in dati["escluse"] if not esclusione_superata(e)]
     tenute = []
     for n in dati.get("navi", []):
         motivo = motivo_esclusione(n, dati)
@@ -734,9 +761,37 @@ def chiave_nave(n):
     return n["imo"] if re.fullmatch(r"\d{7}", n.get("imo") or "") else "N:" + norm_nome(n.get("nome"))
 
 
+def imo_valido(s):
+    """Numero IMO vero: 7 cifre con la cifra di controllo giusta (l'AIS a volte trasmette 0 o numeri inventati)."""
+    s = str(s or "")
+    if not re.fullmatch(r"\d{7}", s):
+        return False
+    return sum(int(s[i]) * (7 - i) for i in range(6)) % 10 == int(s[6])
+
+
+def numeri_nel_nome(nome):
+    """Le parole-numero del nome (cifre e numeri romani): ARGO I e ARGO II, XIN YA ZHOU 1 e 2 sono navi diverse,
+    anche se i nomi si somigliano quasi del tutto."""
+    return sorted(t for t in re.findall(r"[A-Z0-9]+", (nome or "").upper()) if re.fullmatch(r"\d+|[IVX]{1,5}", t))
+
+
 def simili(a, b):
-    a, b = norm_nome(a), norm_nome(b)
-    return bool(a) and bool(b) and (a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.86)
+    """Stesso nome, oppure nome quasi uguale (letture sbagliate del giornale), ma con gli stessi numeri."""
+    na, nb = norm_nome(a), norm_nome(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return numeri_nel_nome(a) == numeri_nel_nome(b) and difflib.SequenceMatcher(None, na, nb).ratio() >= 0.86
+
+
+def stessa_nave(nome_a, imo_a, nome_b, imo_b):
+    """Con due IMO validi decide l'IMO: due navi gemelle hanno nomi quasi uguali ma IMO diversi. Solo se anche
+    il nome e' identico si pensa a un IMO letto male (giornale) o trasmesso male (AIS) e la nave e' la stessa.
+    Se uno dei due IMO manca si guarda il nome."""
+    if imo_valido(imo_a) and imo_valido(imo_b):
+        return str(imo_a) == str(imo_b) or (bool(norm_nome(nome_a)) and norm_nome(nome_a) == norm_nome(nome_b))
+    return simili(nome_a, nome_b)
 
 
 def aggiorna_registro(dati, pos, statici, adesso):
@@ -805,26 +860,38 @@ def scarto_solo_ais(dati, mmsi, p, dove, adesso, ricezione_ok=None):
     nome = (s.get("nome") or p.get("nome") or "").upper()
     if not nome:
         return "senza nome"
-    imo = s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else ""
+    imo = s.get("imo") if imo_valido(s.get("imo")) else ""
     if e_esclusa(dati, imo, nome, mmsi):
         return "nella lista delle escluse (chemical o ro-ro con passeggeri)"
     return None
 
 
-def trova_mmsi(n, dati):
+def trova_mmsi(n, dati, gia_usati=()):
+    """L'MMSI (identita' AIS) di una nave dell'elenco: prima per IMO, poi per nome. Per nome non si prende mai
+    una nave che l'AIS dice avere un altro IMO valido (la gemella), ne' una gia' abbinata a un'altra nave."""
     if n.get("mmsi"):
         return n["mmsi"]
     sta, reg = dati.get("statici", {}), dati.get("registro", {})
+    imo = n.get("imo") if imo_valido(n.get("imo")) else ""
+    if imo:
+        for mmsi, s in sta.items():
+            if s.get("imo") == imo and mmsi not in gia_usati:
+                return mmsi
     for mmsi, s in sta.items():
-        if n.get("imo") and s.get("imo") == n["imo"]:
-            return mmsi
-    for mmsi, s in sta.items():
-        if simili(s.get("nome"), n["nome"]):
+        if mmsi not in gia_usati and stessa_nave(s.get("nome"), s.get("imo"), n["nome"], imo):
             return mmsi
     for mmsi, p in reg.items():
-        if simili(p.get("nome"), n["nome"]):
+        if mmsi not in gia_usati and stessa_nave(p.get("nome"), (sta.get(mmsi) or {}).get("imo"), n["nome"], imo):
             return mmsi
     return None
+
+
+def abbinamento_sbagliato(n, s):
+    """La nave ha un IMO valido (dal giornale) e l'AIS dell'MMSI abbinato e' un'altra nave (altro IMO valido e altro nome)."""
+    s = s or {}
+    if not (imo_valido(n.get("imo")) and imo_valido(s.get("imo"))):
+        return False
+    return not stessa_nave(n.get("nome"), n["imo"], s.get("nome"), s["imo"])
 
 
 def chiave_posto(dg):
@@ -834,11 +901,25 @@ def chiave_posto(dg):
     return str(dg["molo"]).upper() + "|" + (dg.get("lato") or dg.get("punto") or "")
 
 
-def impara(dati, dg, dove):
+VERSIONE_TARATURA = 2
+
+
+def azzera_taratura_vecchia(dati):
+    """v1 (fino al 28/10) contava un'osservazione al giorno per posto, di qualunque nave: una sola nave ferma due
+    giorni bastava a 'imparare' un posto. I conteggi di prima non dicono quante navi diverse si sono viste: si riparte."""
+    if dati.get("versione_taratura") == VERSIONE_TARATURA:
+        return
+    dati["taratura"], dati["taratura_giorni"] = {}, {}
+    dati["versione_taratura"] = VERSIONE_TARATURA
+
+
+def impara(dati, dg, dove, chi=""):
     """Taratura dei nomi delle banchine sui dati reali: ogni volta che una nave
     del giornale e' vista ferma dall'AIS, si annota dove si trova davvero.
     Cosi' si scopre da soli, per esempio, quale lato di Messina e' Ronco e quale
-    Canepa, e come si chiama il braccio est delle Rinfuse."""
+    Canepa, e come si chiama il braccio est delle Rinfuse.
+    chi: la nave (chiave_nave). Ogni nave conta una volta sola per posto (si ricorda per una settimana):
+    servono quindi navi diverse per imparare un posto."""
     k = chiave_posto(dg)
     if not k:
         return
@@ -846,10 +927,10 @@ def impara(dati, dg, dove):
     t = dati.setdefault("taratura", {}).setdefault(k, {})
     oggi = datetime.now(ROMA).date().isoformat()
     vist = dati.setdefault("taratura_giorni", {})
-    sig = k + ">" + v + ">" + oggi
-    if sig in vist:
-        return                                   # una sola osservazione al giorno per nave e posto
-    vist[sig] = 1
+    base = k + ">" + v + ">" + (chi or "?") + ">"
+    if any(s.startswith(base) for s in vist):
+        return                                   # questa nave e' gia' contata per questo posto
+    vist[base + oggi] = 1
     t[v] = t.get(v, 0) + 1
 
 
@@ -892,9 +973,19 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
     reg, sta = dati.get("registro", {}), dati.get("statici", {})
     oggi = adesso.astimezone(ROMA).date().isoformat()
     usati = set()
+    # prima le navi gia' abbinate, cosi' un MMSI gia' preso non finisce anche a un'altra nave dal nome simile
+    for n in dati["navi"]:
+        if n.get("mmsi") and abbinamento_sbagliato(n, sta.get(n["mmsi"])):
+            log("abbinamento AIS sbagliato, tolto:", n["nome"], n.get("imo"), "non e'", (sta.get(n["mmsi"]) or {}).get("nome"),
+                (sta.get(n["mmsi"]) or {}).get("imo"))
+            n.pop("mmsi")
+        elif n.get("mmsi"):
+            usati.add(n["mmsi"])
     for n in dati["navi"]:
         n.pop("ais", None)
-        mmsi = trova_mmsi(n, dati)
+        mmsi = trova_mmsi(n, dati, usati - {n.get("mmsi")})
+        if mmsi and not n.get("mmsi") and abbinamento_sbagliato(n, sta.get(mmsi)):
+            mmsi = None
         if not mmsi:
             continue
         n["mmsi"] = mmsi; usati.add(mmsi)
@@ -908,7 +999,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         s = sta.get(mmsi, {})
         if s.get("nome") and len(s["nome"]) >= 3:
             n["nome"] = s["nome"].upper()                     # nome ufficiale dall'AIS
-        if s.get("imo") and re.fullmatch(r"\d{7}", s["imo"]):
+        if imo_valido(s.get("imo")):
             n["imo"] = s["imo"]
         if not n.get("loa") and s.get("lung"):
             n["loa"], n["larg"] = s["lung"], s.get("larg") or None
@@ -925,7 +1016,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         a = {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
              "dist_nm": round(d, 1), "quando": quando.astimezone(ROMA).strftime("%H.%M")}
         if dove:
-            impara(dati, n.get("dove_giornale"), dove)
+            impara(dati, n.get("dove_giornale"), dove, chiave_nave(n))
             a["ormeggiata"] = True; a["s_m"] = dove["s_m"]
             if (n.get("assenze_ais") or 0) >= ASSENZE_MAX:
                 a["silenzio"] = True                              # l'app non la dice piu' 'in tempo'
@@ -979,7 +1070,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         log("in banchina secondo l'AIS:", nome, dove["molo"], dove["lato"],
             "(nave lunga, oltre la fine del tratto di %d m)" % dove["oltre_m"] if dove.get("oltre_m") else "")
         dati["navi"].append({
-            "nome": nome, "imo": s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else "",
+            "nome": nome, "imo": s.get("imo") if imo_valido(s.get("imo")) else "",
             "mmsi": mmsi, "tipo": tipo_ais(s.get("tipo")), "loa": s.get("lung") or None, "larg": s.get("larg") or None,
             "accosto": dove["molo"] + " " + ("TESTATA" if dove["lato"] == "testata" else dove["lato"][:3].upper() + "."),
             "dove": {"terminal": dove["terminal"], "molo": dove["molo"],
@@ -1029,7 +1120,7 @@ def costruisci_non_visitare(dati, banchine, adesso, ricezione_ok=None):
         nome = (s.get("nome") or nome or p.get("nome") or "").upper()
         if not nome:
             continue
-        imo = s.get("imo") if re.fullmatch(r"\d{7}", s.get("imo") or "") else (imo or "")
+        imo = s.get("imo") if imo_valido(s.get("imo")) else (imo or "")
         log("da non visitare, ferma in banchina:", nome, "-", motivo, "-", dove["molo"], dove["lato"])
         risultato.append({
             "nome": nome, "imo": imo, "mmsi": mmsi, "tipo": tipo or tipo_ais(s.get("tipo")) or "",
@@ -1153,11 +1244,14 @@ def passa_ad_in_porto(n, oggi):
         n["in_porto_dal"] = n["giorno"]
 
 
-def fondi_navi(v, n):
+def fondi_navi(v, n, adesso=None):
     """v: la nave gia' in elenco; n: la stessa nave letta ora da un giornale.
     - Orari: per ogni evento vale quello del giorno piu' avanti; a parita' di giorno
       vale il giornale piu' recente (le variazioni correggono il giornale prima).
     - Dati fissi (posto, misure, tipo): vale il giornale piu' recente, l'altro riempie i vuoti.
+    - Sosta: un arrivo nuovo la fa ripartire (la nave torna in porto), salvo che l'AIS la veda gia' ferma in banchina
+      da poco (meno di 12 ore prima di adesso): allora l'"arrivo" e' uno spostamento a un'altra banchina e la sosta
+      continua, cosi' una visita fatta oggi non si perde quando il giornale di domani la sposta.
     Funziona anche se si legge un giornale piu' vecchio di uno gia' letto."""
     n_recente = (n.get("giorno") or "") >= (v.get("giorno") or "")
     base, altra = (n, v) if n_recente else (v, n)
@@ -1175,7 +1269,14 @@ def fondi_navi(v, n):
     for campo in ("mmsi", "visto_banchina", "loa", "larg", "tipo", "imo"):
         if altra.get(campo) and not base.get(campo):
             base[campo] = altra[campo]
-    if base.get("arrivo"):
+    gia_in_banchina = False
+    if adesso is not None and (v.get("visto_banchina") or base.get("visto_banchina")):
+        try:
+            visto = datetime.fromisoformat(v.get("visto_banchina") or base["visto_banchina"])
+            gia_in_banchina = adesso - visto <= timedelta(hours=12)
+        except (TypeError, ValueError):
+            pass
+    if base.get("arrivo") and not gia_in_banchina:
         base.pop("in_porto_dal", None)           # sta arrivando: la sosta riparte dall'arrivo
     else:
         ip = base.get("in_porto_dal") or altra.get("in_porto_dal")
@@ -1201,11 +1302,12 @@ def unisci_giornale(dati, nuove, data, adesso=None):
         normalizza_eventi(n)
         v = vecchie.pop(chiave_nave(n), None)
         if v is None:
-            v = next((x for k, x in list(vecchie.items()) if simili(x["nome"], n["nome"])), None)
-            if v is not None:
-                vecchie.pop(chiave_nave(v), None)
+            # stessa nave scritta un po' diversa (lettura del giornale), ma mai due navi con IMO validi diversi
+            k_v = next((k for k, x in vecchie.items() if stessa_nave(x["nome"], x.get("imo"), n["nome"], n.get("imo"))), None)
+            if k_v is not None:
+                v = vecchie.pop(k_v)
         if v is not None:
-            n = fondi_navi(v, n)
+            n = fondi_navi(v, n, adesso)
             n.setdefault("giorno", data)
         passa_ad_in_porto(n, oggi)
         risultato.append(n)
@@ -1296,21 +1398,38 @@ def leggi_tabelle_sito(html_pagina):
     return out
 
 
+def nave_della_riga(navi, nome):
+    """La nave dell'elenco a cui si riferisce una riga della tabella del sito (che ha solo il nome):
+    quella con lo stesso nome, se c'e'. Altrimenti una sola nave molto somigliante (0,92: una lettera diversa in un
+    nome lungo, letto male dal giornale) e con gli stessi numeri nel nome. Nei nomi corti una lettera diversa e' un'altra
+    nave (NORDIC ANNE e NORDIC ANNA): la conferma di partenza di una gemella non deve togliere la nostra nave."""
+    k = norm_nome(nome)
+    if not k:
+        return None
+    for n in navi:
+        if norm_nome(n.get("nome")) == k:
+            return n
+    candidati = [n for n in navi if simili(n.get("nome"), nome)
+                 and difflib.SequenceMatcher(None, norm_nome(n.get("nome")), k).ratio() >= 0.92]
+    return candidati[0] if len(candidati) == 1 else None
+
+
 def applica_conferme(dati, righe):
     for r in righe:
-        for n in dati.get("navi", []):
-            if simili(n["nome"], r["nave"]):
-                q = istante(r["giorno"], r["ora"])
-                try:
-                    import leggi_giornale as L
-                    dg = L.riconosci_accosto(r["ormeggio"])
-                    if dg and not n.get("dove_giornale"):
-                        n["dove_giornale"] = {"terminal": dg["terminal"], "molo": dg["molo"], "lato": dg["lato"], "punto": dg["punto"]}
-                except Exception:
-                    pass
-                n["conferma"] = {"tipo": r["tipo"], "ora": r["ora"], "giorno": r["giorno"], "stato": r["conf"],
-                                 "ormeggio": r["ormeggio"], "quando": q.isoformat() if q else None}
-                log("conferma dal sito:", n["nome"], r["tipo"], r["ora"], r["conf"])
+        n = nave_della_riga(dati.get("navi", []), r["nave"])
+        if n is None:
+            continue
+        q = istante(r["giorno"], r["ora"])
+        try:
+            import leggi_giornale as L
+            dg = L.riconosci_accosto(r["ormeggio"])
+            if dg and not n.get("dove_giornale"):
+                n["dove_giornale"] = {"terminal": dg["terminal"], "molo": dg["molo"], "lato": dg["lato"], "punto": dg["punto"]}
+        except Exception:
+            pass
+        n["conferma"] = {"tipo": r["tipo"], "ora": r["ora"], "giorno": r["giorno"], "stato": r["conf"],
+                         "ormeggio": r["ormeggio"], "quando": q.isoformat() if q else None}
+        log("conferma dal sito:", n["nome"], r["tipo"], r["ora"], r["conf"])
 
 
 # ---------------------------------------------------------------- principale
@@ -1328,6 +1447,29 @@ def secondi_ascolto(ora):
     return 720 if ora.hour == 7 and ora.minute < 30 else 600
 
 
+# Il telefono scarica solo navi.enc.json: dentro ci sono soltanto le cose che l'app mostra. La memoria del
+# programma (posizioni AIS di tutto il Mar Ligure degli ultimi 3 giorni, dati delle navi, esclusioni, taratura...)
+# sta in stato.enc.json, cifrato allo stesso modo, che l'app non scarica: cosi' il file del telefono resta piccolo
+# (prima cresceva di giorno in giorno: 230 KB il 28/10, scaricati a ogni apertura).
+CAMPI_APP = ("navi", "non_visitare", "data", "giornali", "fonte", "letto", "ais", "aggiornato", "esempio")
+
+
+def dati_per_app(dati):
+    return {c: dati[c] for c in CAMPI_APP if c in dati}
+
+
+def apri_stato(k, stato, uscita):
+    """La memoria del programma: stato.enc.json; se manca (prima volta) o non si apre, i dati dell'app di prima
+    (fino al 28/10 tutto stava in navi.enc.json), cosi' non si riparte mai da zero per un file rovinato."""
+    try:
+        d = apri(k, stato)
+        if d is not None:
+            return d
+    except Exception as e:
+        log("ATTENZIONE: stato.enc.json non si apre (", type(e).__name__, e, "): riparto da navi.enc.json")
+    return apri(k, uscita) or {}
+
+
 def main():
     import requests
     codice = os.environ.get("CODICE_MAPPA")
@@ -1336,11 +1478,13 @@ def main():
     k = chiave(codice)
     banchine = leggi_banchine(k)
     uscita = os.path.join(BASE, "navi.enc.json")
-    dati = apri(k, uscita) or {}
+    stato = os.path.join(BASE, "stato.enc.json")
+    dati = apri_stato(k, stato, uscita)
     if dati.get("esempio"):
         dati = {}
     dati.setdefault("navi", [])
     azzera_conteggi_vecchi(dati)
+    azzera_taratura_vecchia(dati)
     adesso = datetime.now(timezone.utc)
     forza = "--forza-giornale" in sys.argv
 
@@ -1404,15 +1548,18 @@ def main():
         # quanto si ascolta: vedi secondi_ascolto
         secondi = secondi_ascolto(ora)
         pos, statici = asyncio.run(ascolta_ais(chiave_ais, secondi))
-        aggiorna_registro(dati, pos, statici, adesso)
         # ricezione buona = in questo giro si sono sentite abbastanza navi dentro i moli: solo allora il
-        # silenzio di una nave vuol dire qualcosa (un calo di copertura toglierebbe tutte le navi insieme)
+        # silenzio di una nave vuol dire qualcosa (un calo di copertura toglierebbe tutte le navi insieme).
+        # Si giudica PRIMA di mettere nel registro le posizioni di questo giro: il riferimento sono le navi che i giri
+        # precedenti avevano sentito ferme nei moli. Dopo, le navi sentite adesso ci sarebbero sempre e la ricezione
+        # sembrerebbe perfetta a ogni ripartenza (mattino, o dopo una pausa lunga): falsi "segnale perso".
         sentite = set(pos)
         finestra = finestra_ricezione(dati, adesso)       # dati["aggiornato"] e' ancora quello del giro prima
         ricezione_ok, n_rif, n_sentite = qualita_ricezione(dati, sentite, adesso, finestra)
-        log("AIS: ascolto di", secondi, "secondi - navi ferme nei moli (ultime %.1f ore)" % (finestra.total_seconds() / 3600), n_rif,
-            "- sentite in questo giro", n_sentite, "- ricezione",
-            "buona" if ricezione_ok else "scarsa (la regola dell'assenza non scatta)")
+        aggiorna_registro(dati, pos, statici, adesso)
+        log("AIS: ascolto di", secondi, "secondi - navi ferme nei moli nei giri prima (ultime %.1f ore)" % (finestra.total_seconds() / 3600),
+            n_rif, "- risentite in questo giro", n_sentite, "- ricezione",
+            "buona" if ricezione_ok else "scarsa o non giudicabile (la regola dell'assenza non scatta)")
         aggiorna_presenze(dati, banchine, adesso, sentite, ricezione_ok)
         dati["ais"] = bool(pos)
     else:
@@ -1438,8 +1585,13 @@ def main():
             ("ormeggiata" if (n.get("ais") or {}).get("ormeggiata") else ("solo AIS" if n.get("fonti") == ["ais"] else "giornale")))
     dati["aggiornato"] = datetime.now(timezone.utc).isoformat()
     dati["esempio"] = False
-    chiudi(k, dati, uscita)
-    log("scritto", uscita, "navi:", len(dati.get("navi", [])),
+    chiudi(k, dati, stato)                    # prima la memoria: se il giro si interrompe dopo, non si perde
+    # Il workflow nuovo (STATO_SEPARATO=si) pubblica anche stato.enc.json: al telefono va solo il necessario.
+    # Con il workflow di prima, o a mano, stato.enc.json non verrebbe pubblicato: navi.enc.json resta completo,
+    # cosi' passando da uno all'altro la memoria non si perde mai.
+    chiudi(k, dati_per_app(dati) if os.environ.get("STATO_SEPARATO") == "si" else dati, uscita)
+    log("scritto", uscita, "(%d KB) e la memoria in stato.enc.json (%d KB)" % (os.path.getsize(uscita) // 1024, os.path.getsize(stato) // 1024),
+        "navi:", len(dati.get("navi", [])),
         "con AIS:", sum(1 for n in dati.get("navi", []) if n.get("ais")),
         "in banchina:", sum(1 for n in dati.get("navi", []) if (n.get("ais") or {}).get("ormeggiata")))
 

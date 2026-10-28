@@ -1,26 +1,37 @@
-# Aggiorna le navi del giorno (giornale della Capitaneria + posizioni AIS)
-# ogni 15 minuti dalle 7 alle 21, ora di Genova, e con un solo giro alle 23,
-# alle 3 e alle 6 (ascolto AIS piu' lungo). Le navi vengono salvate solo
-# cifrate (navi.enc.json) con il codice della mappa.
+# Aggiorna le navi (giornale della Capitaneria + posizioni AIS), ora di Genova:
+# di giorno un giro ogni 15 minuti dalle 7:00 alle 20:45, di notte un solo giro
+# alle 23, alle 3 e alle 6 (ascolto AIS piu' lungo). Le navi vengono salvate solo
+# cifrate con il codice della mappa: navi.enc.json (quello che scarica l'app) e
+# stato.enc.json (la memoria del programma, che l'app non scarica).
 #
-# GitHub fa partire le esecuzioni programmate in modo irregolare (a volte
-# poche al giorno). Per questo di giorno ogni esecuzione resta accesa e fa da
-# sola un giro ogni 15 minuti, fino alle 21 (al massimo 5 ore e mezza). Le
-# partenze programmate ogni ora servono solo a riaccenderla se si e' fermata.
-# Di notte la partenza oraria controlla se il giro previsto (23, 3 o 6) e' gia'
-# stato fatto e, se no, lo fa: cosi' un'esecuzione saltata o in ritardo si
-# recupera all'ora dopo. La decisione e' in strumenti/orario_giro.sh.
+# STAFFETTA. GitHub fa partire le esecuzioni programmate quando vuole: il 27-28/10
+# su circa 20 partenze orarie ne ha fatte 3. Per questo l'aggiornamento non dipende
+# piu' da loro: ogni esecuzione resta accesa al massimo 5 ore, aspetta gli orari dei
+# giri (strumenti/orario_giro.py) e prima di chiudersi fa partire quella dopo
+# ("passa il testimone"). Le due esecuzioni non girano mai insieme (concurrency):
+# la nuova aspetta che la vecchia finisca. Un giro saltato o in ritardo si fa appena
+# possibile, uno gia' fatto non si rifa'. La partenza oraria resta solo di riserva,
+# per riaccendere la staffetta se si fosse interrotta (per esempio se qualcuno
+# annulla l'esecuzione in corso). Le esecuzioni di riserva arrivate mentre la
+# staffetta va compaiono come annullate: e' normale.
 #
-# Ogni giro riscrive il file delle navi. Per non riempire il deposito di
-# versioni quasi uguali (56 al giorno), il commit fatto da questa stessa
-# esecuzione al giro prima viene sovrascritto invece di aggiungerne un altro.
+# Ogni giro riscrive i file delle navi. Per non riempire il deposito di versioni
+# quasi uguali, il commit fatto da questa stessa esecuzione al giro prima viene
+# sovrascritto invece di aggiungerne un altro.
+#
+# Le modifiche a questo file valgono dall'esecuzione successiva (la staffetta la
+# avvia sempre con la versione piu' recente su main).
 name: Navi del giorno
 
 on:
   schedule:
-    - cron: "5 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
+      subito:
+        description: "Fai subito un giro (senza aspettare il prossimo orario)"
+        type: boolean
+        default: true
       forza:
         description: "Rileggi il giornale anche se e' gia' stato letto"
         type: boolean
@@ -28,6 +39,7 @@ on:
 
 permissions:
   contents: write
+  actions: write          # per far partire l'esecuzione successiva (staffetta)
 
 concurrency:
   group: navi
@@ -35,44 +47,48 @@ concurrency:
 
 jobs:
   aggiorna:
-    runs-on: ubuntu-latest
-    timeout-minutes: 345
+    # versione fissa: ubuntu-latest passa a Ubuntu 26.04 (Python 3.14) tra il 19/10 e il 19/11/2026
+    # e i programmi del giornale (numpy<2.3) non hanno versioni pronte per Python 3.14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
     steps:
+      - name: Inizio
+        run: echo "INIZIO_LAVORO=$(date +%s)" >> "$GITHUB_ENV"
+
       # gli ultimi 30 commit: servono a sapere quando i dati sono stati aggiornati l'ultima volta
       - uses: actions/checkout@v4
         with:
           fetch-depth: 30
 
-      - name: Che cosa fare adesso (ora di Genova)
-        id: orario
-        env:
-          EVENTO: ${{ github.event_name }}
-        run: bash strumenti/orario_giro.sh >> "$GITHUB_OUTPUT"
-
       - name: Programmi per leggere il giornale
-        if: steps.orario.outputs.vai == 'si'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq tesseract-ocr poppler-utils > /dev/null
           pip install -q -r strumenti/requisiti.txt
 
-      - name: Giri (ogni 15 minuti dalle 7 alle 21, uno solo di notte)
-        if: steps.orario.outputs.vai == 'si'
+      - name: Giri (ogni 15 minuti di giorno, alle 23, 3 e 6 di notte)
         env:
           CODICE_MAPPA: ${{ secrets.CODICE_MAPPA }}
           AISSTREAM_KEY: ${{ secrets.AISSTREAM_KEY }}
-          UN_GIRO: ${{ steps.orario.outputs.un_giro }}
+          SUBITO: ${{ github.event_name == 'workflow_dispatch' && inputs.subito && 'si' || 'no' }}
+          STATO_SEPARATO: "si"    # la memoria del programma in stato.enc.json, al telefono solo navi.enc.json
         run: |
           git config user.name "aggiornamento-navi"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           INIZIO=$(date +%s)
-          FINE_MAX=$((INIZIO + 5*3600 + 1800))
-          FINE_SERA=$(TZ=Europe/Rome date -d "21:05" +%s)
-          FINE=$(( FINE_MAX < FINE_SERA ? FINE_MAX : FINE_SERA ))
+          # dopo 5 ore il prossimo giro tocca all'esecuzione dopo (limite di GitHub: 6 ore per esecuzione)
+          FINE=$((INIZIO + 5*3600))
           OPZ="${{ inputs.forza && '--forza-giornale' || '' }}"
+          if [ "$SUBITO" = "si" ]; then
+            ULTIMO=0                                   # avvio a mano: un giro subito
+          else
+            ULTIMO=$(git log -1 --format=%ct --grep='^Navi aggiornate' 2>/dev/null || true)
+          fi
+          ULTIMO=${ULTIMO:-0}
           ULTIMO_MIO=""
           pubblica() {
             git add navi.enc.json
+            if [ -f stato.enc.json ]; then git add stato.enc.json; fi
             git diff --cached --quiet && return 0
             MSG="Navi aggiornate $(TZ=Europe/Rome date '+%d/%m %H:%M')"
             PREC=$(git rev-parse HEAD)
@@ -97,13 +113,34 @@ jobs:
             ULTIMO_MIO=$(git rev-parse HEAD)
           }
           while true; do
-            GIRO=$(date +%s)
+            ADESSO=$(date +%s)
+            ATTESA=$(python3 strumenti/orario_giro.py attesa "$ULTIMO" "$ADESSO" || echo 900)
+            python3 strumenti/orario_giro.py descrivi "$ULTIMO" "$ADESSO" || true
+            if [ $((ADESSO + ATTESA)) -ge "$FINE" ]; then
+              echo "Il prossimo giro tocca all'esecuzione dopo"; break
+            fi
+            if [ "$ATTESA" -gt 0 ]; then sleep "$ATTESA"; fi
             git pull -q --rebase || true
             python3 strumenti/aggiorna_navi.py $OPZ || echo "giro non riuscito, si riprova al prossimo"
             OPZ=""
             pubblica
-            if [ "$UN_GIRO" = "si" ]; then echo "Giro notturno fatto"; break; fi
-            PROSSIMO=$((GIRO + 900))
-            if [ "$PROSSIMO" -ge "$FINE" ]; then echo "Fine dei giri"; break; fi
-            ATTESA=$((PROSSIMO - $(date +%s))); [ "$ATTESA" -gt 0 ] && sleep "$ATTESA"
+            ULTIMO=$(date +%s)
           done
+
+      # La staffetta: si avvia l'esecuzione dopo, che aspetta la fine di questa e continua dai suoi orari.
+      # Anche se un passo e' andato male (ma non se qualcuno ha annullato l'esecuzione a mano). Se questa e' durata
+      # pochissimo (qualcosa si rompe subito) si aspetta un po', per non fare partenze a raffica.
+      - name: Passa il testimone all'esecuzione dopo
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PASSATI=$(( $(date +%s) - INIZIO_LAVORO ))
+          if [ "$PASSATI" -lt 600 ]; then sleep $((600 - PASSATI)); fi
+          for i in 1 2 3; do
+            if gh workflow run navi.yml --repo "$GITHUB_REPOSITORY" --ref main -f subito=false; then
+              echo "Testimone passato: l'esecuzione dopo parte appena finisce questa"; exit 0
+            fi
+            sleep 30
+          done
+          echo "::warning title=Staffetta interrotta::Esecuzione dopo non avviata: ripartira' con la partenza programmata di GitHub"
