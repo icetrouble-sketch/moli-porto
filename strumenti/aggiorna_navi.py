@@ -1371,9 +1371,10 @@ def main():
     chiave_ais = os.environ.get("AISSTREAM_KEY")
     if chiave_ais:
         ora = adesso.astimezone(ROMA)
-        # Una nave ferma trasmette la posizione ogni 3 minuti, ma nome e IMO solo ogni 6: con 3 minuti
-        # di ascolto il nome si prende una volta su due. Si ascolta quindi 8 minuti (12 al primo giro del mattino).
-        secondi = int(os.environ.get("AIS_SECONDI") or (720 if ora.hour == 7 and ora.minute < 30 else 480))
+        # Una nave ferma trasmette la posizione ogni 3 minuti, ma nome e IMO solo ogni 6, e aisstream ne
+        # sente solo una parte per volta (28/10: dal 40% all'80% delle navi ferme in un giro da 8 minuti).
+        # Si ascolta quindi 10 minuti (12 al primo giro del mattino): ogni giro dura meno di 12 minuti, il ciclo e' di 15.
+        secondi = int(os.environ.get("AIS_SECONDI") or (720 if ora.hour == 7 and ora.minute < 30 else 600))
         pos, statici = asyncio.run(ascolta_ais(chiave_ais, secondi))
         aggiorna_registro(dati, pos, statici, adesso)
         # ricezione buona = in questo giro si sono sentite abbastanza navi dentro i moli: solo allora il
