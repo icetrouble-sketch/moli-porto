@@ -289,6 +289,14 @@ def correggi_orari(righe):
 # mezzi che non sono navi da visitare: draghe, pontoni, motobarche, rimorchiatori,
 # bettoline di rifornimento, gru, yacht
 TIPI_ESCLUSI = ("HOPPER", "PONT", "MB", "M.B", "R.RE", "RIM", "CRANE", "BETT", "YACHT", "N.C", "BUNK", "SUPPLY", "TUG")
+# Le sigle brevi valgono solo all'inizio del tipo: altrimenti "N.C" si trova dentro "GEN.CARGO" e
+# "MB" dentro "COMBI", e si scarterebbero navi vere.
+TIPI_ESCLUSI_BREVI = ("MB", "M.B", "R.RE", "RIM", "N.C", "TUG")
+
+
+def e_mezzo_di_servizio(tipo):
+    s = re.sub(r"[^A-Z.]", "", (tipo or "").upper())
+    return any(t in s for t in TIPI_ESCLUSI if t not in TIPI_ESCLUSI_BREVI) or any(s.startswith(t) for t in TIPI_ESCLUSI_BREVI)
 ZONE_BUONE = ("PRINCIPALE", "VARIAZIONI")
 
 
@@ -306,6 +314,22 @@ NOTA_RORO = "Ro-ro: né il giornale né l'AIS dicono ancora se porta passeggeri,
 # Cisterne (TANK) escluse per ora, in attesa di conferma di Mele: per rimetterle in elenco
 # basta portare questo interruttore a False.
 ESCLUDI_CISTERNE = True
+# Lunghezze minime: sotto si tratta di mezzi di servizio. Ai Rinfuse arrivano pero' anche navi piccole
+# (rottami, gomma, carbone), che si visitano: li' si scartano solo le misure impossibili per una nave.
+LUNGHEZZA_MINIMA = 50
+LUNGHEZZA_MINIMA_RINFUSE = 25
+# Per le navi viste solo dall'AIS (il giornale non le nomina) serve piu' cautela, per non prendere barche di servizio
+LUNGHEZZA_MINIMA_AIS = 100
+LUNGHEZZA_MINIMA_AIS_RINFUSE = 50
+
+
+def lunghezza_minima(terminal):
+    return LUNGHEZZA_MINIMA_RINFUSE if terminal == "rinfuse" else LUNGHEZZA_MINIMA
+
+
+def lunghezza_minima_ais(terminal, tipo):
+    """Per l'AIS un cargo ai Rinfuse puo' essere piccolo; tutte le altre devono essere navi vere."""
+    return LUNGHEZZA_MINIMA_AIS_RINFUSE if terminal == "rinfuse" and tipo == "CARGO" else LUNGHEZZA_MINIMA_AIS
 
 
 def lettere(t):
@@ -320,6 +344,13 @@ def e_chimichiera(tipo):
 def e_cisterna(tipo):
     """TANK, TANKER... (le chemical sono gia' escluse a parte)."""
     return tipo == "TANK" or "TANK" in lettere(tipo)
+
+
+def e_passeggeri(tipo):
+    """Navi passeggeri e da crociera (PASS., CRUISE): non sono il nostro obiettivo.
+    Le ro-ro con passeggeri sono gia' escluse a parte."""
+    t = lettere(tipo)
+    return t.startswith("PASS") or "CRUISE" in t or t.startswith("CROCIER")
 
 
 def ro_ro_pax_dal_testo(tipo):
@@ -342,6 +373,8 @@ def motivo_esclusione(n, dati):
         return "nave chemical"
     if ro_ro_pax_dal_testo(tipo):
         return "ro-ro con passeggeri (dal giornale)"
+    if e_passeggeri(tipo):
+        return "nave passeggeri o da crociera"
     if ESCLUDI_CISTERNE and e_cisterna(tipo):
         return "cisterna (da confermare)"
     t = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or ""))
@@ -422,12 +455,13 @@ def navi_dal_giornale(righe, data):
         tipo = pulisci_tipo(r["tipo"])
         if tipo and tipo not in TIPI and "".join(c for c in tipo if c.isalpha()):
             log("tipo non riconosciuto:", pulisci_nome(r["nave"]), repr(r["tipo"]), "| zona", zona)
-        if any(t in re.sub(r"[^A-Z.]", "", (r["tipo"] or "").upper()) for t in TIPI_ESCLUSI):
+        if e_mezzo_di_servizio(r["tipo"]):
             if r.get("dove"):
                 scartate.append(pulisci_nome(r["nave"]) + " (" + (r["tipo"] or "").strip() + ")")
             continue
         motivo = ("nave chemical" if e_chimichiera(r["tipo"]) or e_chimichiera(tipo)
                   else "ro-ro con passeggeri (dal giornale)" if ro_ro_pax_dal_testo(r["tipo"])
+                  else "nave passeggeri o da crociera" if e_passeggeri(r["tipo"]) or e_passeggeri(tipo)
                   else "cisterna (da confermare)" if ESCLUDI_CISTERNE and (e_cisterna(tipo) or e_cisterna(r["tipo"])) else None)
         if motivo:
             nome_e = pulisci_nome(r["nave"])
@@ -436,8 +470,6 @@ def navi_dal_giornale(righe, data):
                                 "in_mappa": bool((r.get("dove") or {}).get("terminal") in TERMINAL_MAPPA)})
             continue
         loa = misura(r.get("loa"), 25, 420)
-        if loa and loa < 50:
-            continue                                   # mezzi piccoli di servizio
         dove = r.get("dove"); campo = None
         if r["sezione"] == "ARRIVI":
             campo = "arrivo"
@@ -457,6 +489,9 @@ def navi_dal_giornale(righe, data):
         nome = pulisci_nome(r["nave"])
         if not nome:
             continue
+        if loa and loa < lunghezza_minima(dove["terminal"]):
+            log("scartata perche' troppo corta:", nome, "|", loa, "m |", dove["terminal"], "|", (r["tipo"] or "").strip())
+            continue                                   # mezzi piccoli di servizio
         chiave_n = r["imo"] if r["imo_ok"] else re.sub(r"[^A-Z]", "", nome)
         n = per_nave.setdefault(chiave_n, {"nome": nome, "imo": r["imo"] if r["imo_ok"] else "",
                                            "tipo": tipo, "loa": loa, "larg": r.get("larg"),
@@ -784,10 +819,11 @@ def aggiorna_presenze(dati, banchine, adesso):
         s = sta.get(mmsi, {})
         # solo navi vere (passeggeri, carico, cisterne, lunghe almeno 60 m): niente rimorchiatori e barche
         # (le bettoline di rifornimento e i mezzi di servizio sono sotto i 100 m)
-        if not s or not tipo_ais(s.get("tipo")) or (s.get("lung") or 0) < 100:
+        tipo_a = tipo_ais(s.get("tipo")) if s else ""
+        if not tipo_a or (s.get("lung") or 0) < lunghezza_minima_ais(dove["terminal"], tipo_a):
             continue
-        if ESCLUDI_CISTERNE and tipo_ais(s.get("tipo")) == "TANK":
-            continue                                  # cisterne escluse in attesa di conferma
+        if tipo_a == "PASS." or (ESCLUDI_CISTERNE and tipo_a == "TANK"):
+            continue                                  # passeggeri/crociere e cisterne (in attesa di conferma): non si visitano
         nome = (s.get("nome") or p.get("nome") or "").upper()
         if not nome:
             continue
@@ -822,10 +858,14 @@ def costruisci_non_visitare(dati, banchine, adesso):
         if mmsi:
             e["mmsi"] = mmsi
             trovate[mmsi] = (e.get("nome"), e.get("imo"), e.get("tipo"), e.get("motivo"))
-    if ESCLUDI_CISTERNE:                                      # cisterne che il giornale non nomina
-        for mmsi, s in sta.items():
-            if mmsi not in trovate and tipo_ais(s.get("tipo")) == "TANK" and (s.get("lung") or 0) >= 100:
-                trovate[mmsi] = (s.get("nome"), s.get("imo"), "TANK", "cisterna (da confermare)")
+    for mmsi, s in sta.items():                               # cisterne e passeggeri che il giornale non nomina
+        t = tipo_ais(s.get("tipo"))
+        if mmsi in trovate or (s.get("lung") or 0) < LUNGHEZZA_MINIMA_AIS:
+            continue
+        if t == "PASS.":
+            trovate[mmsi] = (s.get("nome"), s.get("imo"), "PASS.", "nave passeggeri o da crociera")
+        elif t == "TANK" and ESCLUDI_CISTERNE:
+            trovate[mmsi] = (s.get("nome"), s.get("imo"), "TANK", "cisterna (da confermare)")
     risultato = []
     for mmsi, (nome, imo, tipo, motivo) in trovate.items():
         p = reg.get(mmsi)
@@ -1003,7 +1043,7 @@ def pulizia(dati, adesso):
                 and a.get("vel", 0) >= 2 and a.get("dist_nm", 0) > 1 and not n.get("arrivo"):
             log("uscita dal porto (AIS):", n["nome"]); continue
         fonti = n.get("fonti", ["giornale"])
-        if "giornale" not in fonti and (n.get("loa") or 0) < 100:
+        if "giornale" not in fonti and (n.get("loa") or 0) < lunghezza_minima_ais((n.get("dove") or {}).get("terminal"), n.get("tipo")):
             log("tolta (mezzo di servizio visto solo dall'AIS):", n["nome"]); continue
         if "giornale" not in fonti or "memoria" in fonti or n.get("giorno", "") < adesso.astimezone(ROMA).date().isoformat():
             # tenuta solo dalla memoria o dall'AIS: serve una conferma recente

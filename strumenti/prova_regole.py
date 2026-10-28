@@ -227,6 +227,66 @@ class PresenzaInBanchina(unittest.TestCase):
         self.assertNotIn("uscita_vista", d["navi"][0])
 
 
+class NaviPiccoleEPasseggeri(unittest.TestCase):
+    def navi(self, *righe):
+        navi, escluse = A.navi_dal_giornale(list(righe), "2026-10-27")
+        return {n["nome"]: n for n in navi}, escluse
+
+    def test_general_cargo_non_e_piu_scambiata_per_un_mezzo_di_servizio(self):
+        # "N.C" (sigla di servizio) e' dentro "GEN.CARGO": prima la nave veniva scartata
+        for tipo in ("GEN.CARGO", "GEN. CARGO", "CARGO"):
+            navi, _ = self.navi(riga("EOS", "9074729", tipo, "ARRIVI", "10.00", accosto="RUBATTINO LEV.", loa=80.0))
+            self.assertIn("EOS", navi, tipo)
+
+    def test_mezzi_di_servizio_restano_esclusi(self):
+        for tipo in ("HOPPER", "PONT.", "MB", "M.B.", "N.C.", "RIM.", "TUG", "BUNKER", "YACHT", "SUPPLY", "BETT."):
+            navi, _ = self.navi(riga("EOS", "9074729", tipo, "ARRIVI", "10.00", accosto="RUBATTINO LEV.", loa=80.0))
+            self.assertEqual(navi, {}, tipo)
+        navi, _ = self.navi(riga("EOS", "9074729", "COMBI", "ARRIVI", "10.00", accosto="RUBATTINO LEV.", loa=80.0))
+        self.assertIn("EOS", navi)                                   # "MB" dentro "COMBI" non conta
+
+    def test_ai_rinfuse_entrano_anche_le_navi_piccole(self):
+        navi, _ = self.navi(riga("PICCOLA", "9074729", "GEN.CARGO", "ARRIVI", "10.00", accosto="RUBATTINO LEV.", loa=42.0))
+        self.assertIn("PICCOLA", navi)                               # 42 m ai Rinfuse: si visita
+        navi, _ = self.navi(riga("PICCOLA", "9074729", "GEN.CARGO", "ARRIVI", "10.00", accosto="CANEPA LEV.", loa=42.0))
+        self.assertEqual(navi, {})                                   # altrove sotto i 50 m sono mezzi di servizio
+
+    def test_passeggeri_e_crociera_escluse(self):
+        for tipo in ("PASS.", "CRUISE", "PASSEGGERI"):
+            navi, escluse = self.navi(riga("ALFA", "9074729", tipo, "ARRIVI", "10.00"))
+            self.assertEqual(navi, {}, tipo)
+            self.assertEqual(escluse[0]["motivo"], "nave passeggeri o da crociera", tipo)
+        self.assertEqual(A.motivo_esclusione({"nome": "X", "tipo": "PASS."}, {}), "nave passeggeri o da crociera")
+
+    def test_le_bulk_dei_rinfuse_restano(self):
+        navi, _ = self.navi(riga("CARBONIERA", "9074729", "BULK", "ARRIVI", "10.00", accosto="GIACCONE TESTATA", loa=90.0))
+        self.assertIn("CARBONIERA", navi)
+
+    def test_solo_ais_cargo_piccolo_ai_rinfuse_si_ma_non_altrove(self):
+        adesso = quando("2026-10-27", "10:00")
+        def prova(terminal, lung, tipo_ais):
+            banchine = {"MOLO": {"terminal": terminal, "ponente": [[44.4000, 8.9000], [44.4010, 8.9000]],
+                                 "acqua": {"ponente": [0, -1]}}}
+            d = {"navi": [], "escluse": [], "statici": {"247000010": {"imo": "9074729", "nome": "COSTIERA", "tipo": tipo_ais, "lung": lung}},
+                 "registro": {"247000010": posizione(adesso)}}
+            A.aggiorna_presenze(d, banchine, adesso)
+            return d
+        self.assertEqual([n["nome"] for n in prova("rinfuse", 70, 70)["navi"]], ["COSTIERA"])
+        self.assertEqual(prova("rinfuse", 40, 70)["navi"], [])      # troppo piccola anche per i Rinfuse
+        self.assertEqual(prova("imt", 70, 70)["navi"], [])           # altrove servono 100 m
+        self.assertEqual(prova("rinfuse", 200, 65)["navi"], [])      # passeggeri: non entra
+        d = prova("rinfuse", 70, 70)
+        A.pulizia(d, adesso)
+        self.assertEqual(len(d["navi"]), 1)                          # e la pulizia non la toglie
+
+    def test_passeggeri_visti_solo_dall_ais_sono_da_non_visitare(self):
+        adesso = quando("2026-10-27", "10:00")
+        d = {"navi": [], "escluse": [], "statici": {"247000011": {"imo": "9074729", "nome": "TRAGHETTO", "tipo": 60, "lung": 180}},
+             "registro": {"247000011": posizione(adesso)}}
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, adesso)
+        self.assertEqual([(n["nome"], n["motivo"]) for n in d["non_visitare"]], [("TRAGHETTO", "nave passeggeri o da crociera")])
+
+
 class ZonaTraPagine(unittest.TestCase):
     def _pdf_due_pagine(self):
         from PIL import Image
