@@ -487,10 +487,16 @@
      Una passkey del telefono (Face ID / Touch ID) produce un segreto (estensione
      PRF) che cifra la chiave dei dati. Il codice resta l'unico modo di aprire
      i dati da zero; la passkey e' solo una scorciatoia su questo telefono. */
-  var CHIAVE_FACE = "porto_face_v1", CHIAVE_FACE_KO = "porto_face_ko_v1";
+  /* CHIAVE_FACE_NO: l'ultima attivazione di Face ID non e' riuscita su questo browser. Serve solo a non
+     riproporla da sola a ogni ingresso (la spunta resta li', da rimettere a mano per riprovare). */
+  var CHIAVE_FACE = "porto_face_v1", CHIAVE_FACE_KO = "porto_face_ko_v1", CHIAVE_FACE_NO = "porto_face_no_v1";
   var btFace = document.getElementById("btFace"), sceltaFace = document.getElementById("faceScelta");
   var faceAttiva = document.getElementById("faceAttiva");
   var sale = new TextEncoder().encode("moli-porto-face-v1");
+  // Su iPhone, con Chrome le passkey possono finire nelle Password di Google invece che in quelle di Apple
+  // (dipende da un'impostazione del telefono) e li' il segreto per cifrare la chiave puo' mancare: Safari e' la via sicura
+  var DALTRO_BROWSER = /CriOS|FxiOS|EdgiOS|OPiOS/.test(navigator.userAgent || "");
+  var CONSIGLIO_SAFARI = DALTRO_BROWSER ? " Puoi anche aprire la mappa con Safari." : "";
   function faceSalvata(){ try{ return JSON.parse(ls(CHIAVE_FACE) || "null"); }catch(e){ return null; } }
   function faceDisponibile(){
     return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create &&
@@ -502,6 +508,7 @@
     document.getElementById("pin").classList.toggle("con-face", !!f);
     document.getElementById("pinTesto").textContent = f ? "Entra con Face ID, oppure con il codice." : "Inserisci il codice per aprire la mappa.";
     sceltaFace.hidden = true;
+    faceAttiva.checked = !ls(CHIAVE_FACE_NO);
     if(!f && faceDisponibile()){
       PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(function(ok){ sceltaFace.hidden = !ok; }).catch(function(){});
     }
@@ -545,10 +552,10 @@
       credId = aB64(c.rawId);
       var r = c.getClientExtensionResults && c.getClientExtensionResults();
       if(r && r.prf && r.prf.enabled === false) throw new Error("prf");
-      var s = r && r.prf && r.prf.results && r.prf.results.first;
-      if(s) return crypto.subtle.importKey("raw", s, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
-      // il segreto non arriva alla creazione: serve una conferma con Face ID (secondo tocco)
-      return chiediTocco("Ultimo passaggio: conferma con Face ID.", "Conferma con Face ID").then(function(){ return segretoPRF(credId); });
+      // Il segreto si prende sempre da un accesso vero (secondo tocco), non dalla creazione: e' quello che
+      // servira' a ogni ingresso, quindi Face ID risulta attivo solo se funziona davvero su questo browser
+      // (con gestori di passkey diversi da iCloud il segreto alla creazione puo' mancare o essere diverso).
+      return chiediTocco("Ultimo passaggio: controlla che Face ID funzioni.", "Controlla con Face ID").then(function(){ return segretoPRF(credId); });
     }).then(function(k){
       return crypto.subtle.exportKey("raw", chiave).then(function(raw){
         var iv = casuale(12);
@@ -586,21 +593,28 @@
     .catch(function(e){
       btFace.disabled = false;
       if(e && e.name === "NotAllowedError"){
-        // annullato, oppure il telefono non trova piu' la passkey (e propone il QR): al secondo tentativo
-        // andato male si dimentica e si riattiva con il codice
+        // annullato, oppure il telefono non trova piu' la passkey (e propone il QR o le password del browser):
+        // al secondo tentativo andato male si dimentica e si riattiva con il codice
         var ko = (Number(ls(CHIAVE_FACE_KO)) || 0) + 1;
         if(ko < 2){
           ls(CHIAVE_FACE_KO, String(ko));
-          err.textContent = "Face ID annullato o non riuscito. Riprova, oppure usa il codice.";
+          err.textContent = "Face ID annullato o non riuscito. Riprova, oppure usa il codice." + CONSIGLIO_SAFARI;
           return;
         }
         ls(CHIAVE_FACE_KO, null); ls(CHIAVE_FACE, null); mostraFace();
-        err.textContent = "Face ID non risponde più: entra con il codice e riattivalo.";
+        err.textContent = "Face ID non risponde più: entra con il codice e riattivalo." + CONSIGLIO_SAFARI;
+        return;
+      }
+      ls(CHIAVE_FACE, null); ls(CHIAVE_FACE_KO, null);
+      if(e && e.message === "prf"){
+        // il browser (o il gestore delle passkey) non restituisce il segreto: riattivarlo qui non servirebbe
+        ls(CHIAVE_FACE_NO, "1"); mostraFace();
+        err.textContent = "Questo browser non permette a Face ID di aprire la mappa: entra con il codice." + CONSIGLIO_SAFARI;
         return;
       }
       // passkey non piu' valida o dati cambiati: si torna al codice
-      ls(CHIAVE_FACE, null); mostraFace();
-      err.textContent = "Face ID non disponibile: inserisci il codice (poi puoi riattivarlo).";
+      mostraFace();
+      err.textContent = "Face ID non è più valido: entra con il codice (poi puoi riattivarlo)." + CONSIGLIO_SAFARI;
     });
   });
 
@@ -615,8 +629,15 @@
       if(!sceltaFace.hidden && faceAttiva.checked && !faceSalvata()){
         chiediTocco("Vuoi entrare con Face ID le prossime volte, senza scrivere il codice?", "Attiva Face ID")
           .then(function(){ return attivaFace(chiaveOk); })
-          .then(function(){ mostraFace(); avvisoFace("Face ID attivo su questo telefono."); })
-          .catch(function(e){ if(e && e.message !== "annullato") avvisoFace("Face ID non disponibile su questo telefono: resta il codice."); });
+          .then(function(){ ls(CHIAVE_FACE_NO, null); ls(CHIAVE_FACE_KO, null); mostraFace(); avvisoFace("Face ID attivo su questo telefono."); })
+          .catch(function(e){
+            if(e && e.message === "annullato") return;     // "Non ora": niente da segnalare
+            // non e' stato salvato nulla: l'attivazione non si riproporra' da sola a ogni ingresso
+            ls(CHIAVE_FACE_NO, "1"); mostraFace();
+            avvisoFace(e && e.name === "NotAllowedError"
+              ? "Face ID non è stato completato, quindi non è attivo. Se si è aperta la lista delle password, chiudila: resta il codice." + CONSIGLIO_SAFARI
+              : "Face ID non funziona con questo browser su questo telefono: resta il codice." + CONSIGLIO_SAFARI);
+          });
       }
     }).catch(function(){
       btn.disabled = false; btn.textContent = "Entra";
