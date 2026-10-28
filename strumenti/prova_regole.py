@@ -409,6 +409,23 @@ class RegolaDellAssenza(unittest.TestCase):
         self.assertEqual(len(d["non_visitare"]), 1)                      # senza buona ricezione non si sa: resta
 
 
+class MisuraBanchine(unittest.TestCase):
+    def test_misura_scostamento_laterale_e_sporgenza_oltre_la_fine(self):
+        # banchina lunga ~111 m (da 44.4000 a 44.4010 a lon 8.9000), acqua a ovest
+        lat = 44.4010 + 90 / A.KY                                 # 90 m oltre la fine
+        lon = 8.9000 - 30 / A.KX                                  # 30 m dal lato acqua
+        m = A.misura_banchine(lat, lon, BANCHINE_PROVA)[0]
+        self.assertAlmostEqual(m["perp"], 30, delta=0.5)
+        self.assertAlmostEqual(m["fuori"], 90, delta=0.5)
+        self.assertAlmostEqual(m["lunga"], 111.3, delta=0.5)
+        self.assertGreater(m["verso"], 0)                         # dalla parte dell'acqua
+        self.assertAlmostEqual(m["d"], (30 ** 2 + (90 - 0.1 * 111.3) ** 2) ** 0.5, delta=0.5)   # il tratto si allunga di un decimo
+        self.assertIsNone(A.alla_banchina(lat, lon, BANCHINE_PROVA))   # a 90 m oltre la fine (84 m dal tratto) non e' 'alla banchina'
+        di_fronte = A.misura_banchine(44.4005, lon, BANCHINE_PROVA)[0]
+        self.assertAlmostEqual(di_fronte["fuori"], 0, delta=0.5)
+        self.assertEqual(A.alla_banchina(44.4005, lon, BANCHINE_PROVA)["molo"], "MOLO")
+
+
 class DiagnosiDelGiro(unittest.TestCase):
     t0 = quando("2026-10-27", "10:00")
 

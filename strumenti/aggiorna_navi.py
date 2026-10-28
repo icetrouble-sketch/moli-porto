@@ -631,8 +631,10 @@ def leggi_banchine(k):
 
 
 def misura_banchine(lat, lon, banchine):
-    """Distanza del punto da ogni lato di banchina della mappa, dal piu' vicino: lista di
-    (d metri, verso, molo, lato, terminal, metri dalla radice). verso > 0: dalla parte dell'acqua."""
+    """Distanza del punto da ogni lato di banchina della mappa, dal piu' vicino. Per ciascuno:
+    d (metri dal tratto, che si allunga di un decimo oltre le due estremita'), verso (> 0: dalla parte
+    dell'acqua), perp (metri dalla retta della banchina), fuori (metri oltre la fine del tratto, 0 se
+    sta di fronte), lunga (lunghezza del tratto), s_m (metri dalla radice lungo la banchina)."""
     out = []
     for molo, b in banchine.items():
         for lato in ("ponente", "levante", "testata"):
@@ -644,21 +646,26 @@ def misura_banchine(lat, lon, banchine):
             px, py = lon * KX, lat * KY
             dx, dy = bx - ax, by - ay
             L2 = dx * dx + dy * dy
-            t = max(-0.1, min(1.1, ((px - ax) * dx + (py - ay) * dy) / L2))
+            L = math.sqrt(L2)
+            lungo = ((px - ax) * dx + (py - ay) * dy) / L2        # 0 = radice, 1 = estremita'
+            t = max(-0.1, min(1.1, lungo))
             qx, qy = ax + t * dx, ay + t * dy
             d = math.hypot(px - qx, py - qy)
             ac = (b.get("acqua") or {}).get(lato) or [0, 0]
             verso = (px - qx) * ac[1] + (py - qy) * ac[0]        # >0: lato acqua
-            out.append((d, verso, molo, lato, b["terminal"], round(t * math.sqrt(L2))))
-    return sorted(out, key=lambda x: x[0])
+            perp = abs((px - ax) * dy - (py - ay) * dx) / L
+            fuori = max(0.0, -lungo, lungo - 1.0) * L
+            out.append({"d": d, "verso": verso, "molo": molo, "lato": lato, "terminal": b["terminal"],
+                        "s_m": round(t * L), "perp": perp, "fuori": fuori, "lunga": L})
+    return sorted(out, key=lambda x: x["d"])
 
 
 def alla_banchina(lat, lon, banchine):
     """Se il punto e' a ridosso di una banchina dei nostri moli, dice quale:
     (molo, lato, terminal, metri dalla radice lungo la banchina)."""
-    for d, verso, molo, lato, terminal, s_m in misura_banchine(lat, lon, banchine):
-        if d < 75 and verso > -15:
-            return {"molo": molo, "lato": lato, "terminal": terminal, "s_m": s_m}
+    for m in misura_banchine(lat, lon, banchine):
+        if m["d"] < 75 and m["verso"] > -15:
+            return {"molo": m["molo"], "lato": m["lato"], "terminal": m["terminal"], "s_m": m["s_m"]}
     return None
 
 
@@ -975,8 +982,9 @@ def descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite):
     eta = int((adesso - datetime.fromisoformat(p["quando"])).total_seconds() // 60)
     vicine = misura_banchine(p["lat"], p["lon"], banchine)
     if vicine:
-        d, verso, molo, lato, terminal, _ = vicine[0]
-        banchina = "banchina piu' vicina %s %s a %d m (verso acqua %d)" % (molo, lato, d, verso)
+        m = vicine[0]
+        banchina = ("banchina piu' vicina %s %s a %d m (verso acqua %d; di lato %d m dalla linea, %d m oltre la fine del tratto, "
+                    "tratto lungo %d m)") % (m["molo"], m["lato"], m["d"], m["verso"], m["perp"], m["fuori"], m["lunga"])
     else:
         banchina = "nessuna banchina in mappa"
     dove = alla_banchina(p["lat"], p["lon"], banchine)
@@ -1006,7 +1014,7 @@ def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         if s and (s.get("lung") or 0) < 100:
             continue                                  # rimorchiatori e barche: non interessano
         vicine = misura_banchine(p["lat"], p["lon"], banchine)
-        vicina = vicine[0][0] if vicine else 9999
+        vicina = vicine[0]["d"] if vicine else 9999
         if vicina > 400 or (not s and vicina > 150):
             continue                                  # lontana da ogni banchina (all'ancora, in transito): non e' un caso da spiegare
         righe.append(descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite))
