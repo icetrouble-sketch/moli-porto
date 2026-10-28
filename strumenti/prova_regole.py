@@ -426,6 +426,80 @@ class MisuraBanchine(unittest.TestCase):
         self.assertEqual(A.alla_banchina(44.4005, lon, BANCHINE_PROVA)["molo"], "MOLO")
 
 
+class NaveLungaOltreIlTratto(unittest.TestCase):
+    """La Chennai Express (304 m) a Ponte Etiopia: antenna a 27 m dalla linea di banchina ma 112 m oltre la fine
+    del tratto disegnato (il tratto e' lungo 202 m). La banchina vera e' piu' lunga della mappa."""
+    t0 = quando("2026-10-27", "10:00")
+    FINE = 44.4010                                               # fine del tratto di prova (banchina nord-sud, acqua a ovest)
+
+    def punto(self, oltre=112, lato=27):
+        return self.FINE + oltre / A.KY, 8.9000 - lato / A.KX
+
+    def test_nave_lunga_parallela_alla_banchina_oltre_la_fine_del_tratto_e_alla_banchina(self):
+        lat, lon = self.punto()
+        d = A.alla_banchina(lat, lon, BANCHINE_PROVA, 304, 190)       # prua 190: parallela alla banchina (nord-sud)
+        self.assertEqual((d["molo"], d["lato"], d["oltre_m"]), ("MOLO", "ponente", 112))
+
+    def test_la_regola_larga_vale_solo_con_le_condizioni_giuste(self):
+        lat, lon = self.punto()
+        casi = {"nave corta (100 m)": (lat, lon, 100, 190), "prua di traverso": (lat, lon, 304, 90),
+                "prua sconosciuta (511)": (lat, lon, 304, 511), "senza prua": (lat, lon, 304, None),
+                "troppo oltre la fine (200 m)": (*self.punto(oltre=200), 304, 190),
+                "troppo lontana di lato (60 m)": (*self.punto(lato=60), 304, 190),
+                "dalla parte della terra": (self.FINE + 112 / A.KY, 8.9000 + 27 / A.KX, 304, 190)}
+        for nome, (la, lo, lung, rotta) in casi.items():
+            self.assertIsNone(A.alla_banchina(la, lo, BANCHINE_PROVA, lung, rotta), nome)
+
+    def test_chi_e_gia_entro_75_m_resta_come_prima_senza_regola_larga(self):
+        d = A.alla_banchina(44.4005, 8.9000 - 20 / A.KX, BANCHINE_PROVA, 304, None)
+        self.assertEqual(d["molo"], "MOLO")
+        self.assertNotIn("oltre_m", d)
+
+    def test_prua_parallela_nei_due_versi_e_con_giro_di_360(self):
+        self.assertTrue(A.parallela(190, 0)); self.assertTrue(A.parallela(10, 0)); self.assertTrue(A.parallela(355, 0))
+        self.assertTrue(A.parallela(234, 54)); self.assertFalse(A.parallela(90, 0)); self.assertFalse(A.parallela(None, 0))
+
+    def test_l_ais_mette_in_elenco_la_nave_lunga_vista_oltre_il_tratto(self):
+        mmsi = "636092930"
+        lat, lon = self.punto()
+        p = posizione(self.t0, lat=lat, lon=lon); p["rotta"] = 190
+        d = {"navi": [], "escluse": [], "statici": {mmsi: {"imo": "9306158", "nome": "CHENNAI EXPRESS", "tipo": 71, "lung": 304, "larg": 40}},
+             "registro": {mmsi: p}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0)
+        self.assertEqual([n["nome"] for n in d["navi"]], ["CHENNAI EXPRESS"])
+        self.assertTrue(d["navi"][0]["ais"]["ormeggiata"])
+
+
+class ConteggiVecchi(unittest.TestCase):
+    def test_i_conteggi_di_una_regola_vecchia_si_azzerano_una_volta_sola(self):
+        d = {"navi": [{"nome": "X", "assenze_ais": 2, "segnale_perso": True}]}
+        A.azzera_conteggi_vecchi(d)
+        self.assertNotIn("assenze_ais", d["navi"][0]); self.assertNotIn("segnale_perso", d["navi"][0])
+        self.assertEqual(d["regola_assenza"], A.VERSIONE_REGOLA_ASSENZA)
+        d["navi"][0]["assenze_ais"] = 1
+        A.azzera_conteggi_vecchi(d)
+        self.assertEqual(d["navi"][0]["assenze_ais"], 1)                    # stessa versione: non si tocca
+
+
+class QualitaDellaRicezione(unittest.TestCase):
+    t0 = quando("2026-10-27", "10:00")
+
+    def registro(self, n, minuti_fa=10):
+        return {str(300 + i): posizione(self.t0, minuti_fa) for i in range(n)}
+
+    def test_buona_se_si_sente_la_maggior_parte_delle_navi_ferme(self):
+        d = {"registro": self.registro(10)}
+        sentite = {str(300 + i) for i in range(7)}
+        self.assertEqual(A.qualita_ricezione(d, sentite, self.t0), (True, 10, 7))
+        self.assertEqual(A.qualita_ricezione(d, {str(300 + i) for i in range(5)}, self.t0), (False, 10, 5))   # 5 su 10: scarsa
+
+    def test_non_si_giudica_con_poche_navi_di_riferimento_o_vecchie(self):
+        self.assertFalse(A.qualita_ricezione({"registro": self.registro(4)}, set(self.registro(4)), self.t0)[0])
+        self.assertEqual(A.qualita_ricezione({"registro": self.registro(10, 150)}, set(), self.t0)[1], 0)   # segnali di 2,5 ore fa
+        in_moto = {"registro": {"1": posizione(self.t0, sog=8.0), "2": posizione(self.t0, lat=44.30)}}
+        self.assertEqual(A.qualita_ricezione(in_moto, {"1", "2"}, self.t0)[1], 0)                          # in moto o fuori dai moli
+
+
 class DiagnosiDelGiro(unittest.TestCase):
     t0 = quando("2026-10-27", "10:00")
 
