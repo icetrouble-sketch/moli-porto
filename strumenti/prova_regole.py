@@ -349,7 +349,7 @@ class RegolaDellAssenza(unittest.TestCase):
         self.assertEqual(A.assenze_necessarie({"ascolto": [20, 20]}), 3)          # sentita sempre
         self.assertEqual(A.assenze_necessarie({"ascolto": [6, 10]}), 4)           # 6 volte su 10
         self.assertEqual(A.assenze_necessarie({"ascolto": [5, 10]}), 5)           # una volta su due
-        self.assertEqual(A.assenze_necessarie({"ascolto": [2, 20]}), 6)           # quasi mai: al massimo 6
+        self.assertEqual(A.assenze_necessarie({"ascolto": [2, 20]}), 8)           # quasi mai: al massimo 8
         d = self.dati([self.nave(ascolto=[5, 10])])
         for minuti in (15, 30, 45, 60):
             self.giro(d, minuti)
@@ -1287,6 +1287,41 @@ class MotonaviEMaiViste(unittest.TestCase):
         A.pulizia(d, quando("2026-10-29", "14:00"))
         self.assertEqual(len(d["navi"]), 1)
         self.assertNotIn("forse_partita", d["navi"][0])
+
+
+class CorrezioniSera29(unittest.TestCase):
+    def test_terminal_sentito_male_aspetta_di_piu(self):
+        self.assertEqual(A.assenze_necessarie({}), 3)
+        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.5}), 6)          # MSC EDITH II a Bettolo
+        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.3}), 8)          # al massimo 8 (2 ore)
+        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.5, "ascolto": [30, 30]}), 3)   # lei si sente sempre
+
+    def test_la_statistica_del_terminal_si_aggiorna(self):
+        t = quando("2026-10-29", "15:00")
+        d = {"navi": [{"nome": "A", "imo": "", "mmsi": "1", "tipo": "CONT.", "fonti": ["giornale"], "visto_banchina": t.isoformat(),
+                       "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente"}}],
+             "statici": {}, "registro": {"1": posizione(t, 30)}}
+        for i in range(10):
+            A.aggiorna_presenze(d, BANCHINE_PROVA, t, set() if i % 2 else {"1"}, True)
+        self.assertEqual(d["ascolto_terminal"]["rinfuse"], [5, 9])        # l'ultima assenza non e' ancora confermata
+        self.assertAlmostEqual(d["navi"][0]["p_terminal"], 8 / 13, places=3)
+        for i in range(5):                                                # poi non la si sente piu' (partita)
+            A.aggiorna_presenze(d, BANCHINE_PROVA, t, set(), True)
+        self.assertEqual(d["ascolto_terminal"]["rinfuse"], [5, 9])        # la media del terminal non cambia
+
+    def test_partenza_precisa_del_sito_vince_su_quella_vaga_del_giornale(self):
+        t = quando("2026-10-29", "15:45")
+        n = {"nome": "GOYNUK", "imo": "", "tipo": "M/N", "fonti": ["giornale"], "giorno": "2026-10-29", "partenza": "P.M.",
+             "partenza_giorno": "2026-10-29", "dove": {"terminal": "rinfuse"}, "visto_banchina": quando("2026-10-29", "13:09").isoformat(),
+             "conferma": {"tipo": "partenza", "ora": "14.00", "quando": quando("2026-10-29", "14:00").isoformat()}}
+        d = {"navi": [n]}
+        A.pulizia(d, t)
+        self.assertEqual(d["navi"], [])
+
+    def test_tipo_mv_gia_in_elenco_diventa_motonave(self):
+        d = {"navi": [{"nome": "CERULEAN", "tipo": "MV.", "fonti": ["giornale"]}], "statici": {}}
+        A.escludi_non_visitabili(d, quando("2026-10-29", "15:00"))
+        self.assertEqual(d["navi"][0]["tipo"], "M/N")
 
 
 if __name__ == "__main__":

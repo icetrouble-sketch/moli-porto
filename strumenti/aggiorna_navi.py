@@ -41,7 +41,7 @@ SEGNALE_RECENTE = timedelta(minutes=40)     # una nave solo-AIS entra nell'elenc
 # le navi che l'AIS di solito sente male (vedi assenze_necessarie). Con 2 (fino al 28/10 sera) il 28/10 tra le 14:33 e le 16:58
 # GOYNUK, CHENNAI EXPRESS ed ELISABETH RUSS erano passate a 'segnale perso' pur essendo in banchina (risentite al giro dopo).
 ASSENZE_MIN = 3
-ASSENZE_TETTO = 6
+ASSENZE_TETTO = 8                           # al massimo 2 ore di giorno (29/10: MSC EDITH II a Bettolo, 4 giri senza segnale e c'era)
 ERRORE_AMMESSO = 0.02                       # probabilita' accettata di dire 'segnale perso' a una nave che c'e'
 ASSENZE_MAX = ASSENZE_MIN                   # (nome di prima)
 RICEZIONE_MIN = 5                           # navi ferme nei moli (ultime 2 ore) necessarie per giudicare la ricezione
@@ -538,6 +538,8 @@ def escludi_non_visitabili(dati, adesso):
         dati["escluse"] = [e for e in dati["escluse"] if not esclusione_superata(e)]
     tenute = []
     for n in dati.get("navi", []):
+        if n.get("tipo") and n["tipo"] != "M/N" and e_motonave(n["tipo"]):
+            n["tipo"] = "M/N"                           # navi lette prima della regola delle motonavi (29/10)
         motivo = motivo_esclusione(n, dati)
         if motivo:
             log("esclusa:", n.get("nome"), "-", motivo)
@@ -950,7 +952,10 @@ def assenze_necessarie(n):
     # la stima si fa sui giri prima delle assenze di adesso: se no ogni assenza abbasserebbe la stima e allungherebbe
     # da sola l'attesa, anche per una nave partita davvero
     giri = max(sentita, giri - (n.get("assenze_ais") or 0))
-    p = (sentita + 3) / (giri + 4)
+    # finche' della nave si sa poco vale quanto l'AIS sente le navi ferme nello stesso terminal (p_terminal, calcolata
+    # in aggiorna_presenze): a Bettolo, per esempio, l'AIS perde le navi piu' spesso che altrove
+    pt = n.get("p_terminal") or 0.75
+    p = (sentita + 4 * pt) / (giri + 4)
     if p >= 1:
         return ASSENZE_MIN
     k = math.ceil(math.log(ERRORE_AMMESSO) / math.log(1 - p) - 1e-9)
@@ -1136,6 +1141,18 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
                 if giri > 40:                                  # si ricordano gli ultimi 40 giri, piu' o meno
                     sentita, giri = sentita * 40 / giri, 40
                 n["ascolto"] = [round(sentita, 2), round(giri, 2)]
+                term = (n.get("dove") or {}).get("terminal") or "?"
+                st, gt = (list((dati.setdefault("ascolto_terminal", {})).get(term) or [0, 0]) + [0, 0])[:2]
+                # i giri mancati contano solo quando la nave si risente (erano buchi di ricezione): se fosse partita
+                # davvero, la sua assenza abbasserebbe la media del terminal e allungherebbe l'attesa per tutte
+                if mmsi in sentite:
+                    st, gt = st + 1, gt + 1 + (n.get("assenze_ais") or 0)
+                if gt > 300:                                   # gli ultimi 300 giri-nave del terminal, piu' o meno
+                    st, gt = st * 300 / gt, 300
+                dati["ascolto_terminal"][term] = [round(st, 2), round(gt, 2)]
+            st_t = (dati.get("ascolto_terminal") or {}).get((n.get("dove") or {}).get("terminal") or "?")
+            if st_t:
+                n["p_terminal"] = round((st_t[0] + 3) / (st_t[1] + 4), 3)
             if mmsi in sentite:
                 n["assenze_ais"] = 0
             elif conta:
@@ -1524,7 +1541,9 @@ def pulizia(dati, adesso):
         silenzio = in_silenzio(n)
         if n.get("conferma", {}).get("tipo") == "partenza" and n["conferma"].get("quando"):
             pc = datetime.fromisoformat(n["conferma"]["quando"])
-            part = pc if part is None or pc > part else part
+            vaga = not re.fullmatch(r"\d{2}\.\d{2}", str(n.get("partenza") or ""))
+            # il sito da' un orario preciso: vale piu' di uno vago del giornale ("P.M." = fino a mezzanotte); se no la piu' tarda
+            part = pc if part is None or vaga or pc > part else part
         if part is not None and adesso > part + timedelta(minutes=90):
             if visto and visto > part + timedelta(minutes=30) and a.get("ormeggiata") and not silenzio:
                 n["ritardo"] = True                       # doveva partire, ma e' ancora li'
