@@ -1725,6 +1725,11 @@ window.avviaApp = function(){
                d: "L'ultimo segnale AIS è delle " + ais.quando.replace(".", ":") + ": da allora l'AIS sente le altre navi del porto ma non lei. " +
                   "Potrebbe essere già partita: controlla su VesselFinder. Finché non la risente, non la segno sulla mappa né la conto." };
     if(!ferma){
+      if(ais && ais.entrata_probabile && !ais.attracco_probabile)
+        return { c: "probabile", t: "Probabilmente in banchina",
+                 d: "Alle " + ais.quando.replace(".", ":") + " l'AIS la vedeva " + (ais.manovra ? "in manovra dentro il porto" : "entrare in porto, a " + ais.dist_nm + " miglia e " + ais.vel + " nodi") +
+                    ", poi più nessun segnale: in alcune banchine il servizio AIS che usiamo non riceve le navi ormeggiate. " +
+                    "Molto probabilmente è entrata ed è in banchina: controlla su VesselFinder. Non la segno sulla mappa né la conto finché l'AIS non la vede ferma." };
       if(ais && ais.attracco_probabile)
         return { c: "probabile", t: "Probabilmente in banchina",
                  d: "Alle " + ais.quando.replace(".", ":") + " l'AIS la vedeva in manovra a " + ais.m_banchina + " m da " + ais.banchina_probabile +
@@ -2079,7 +2084,7 @@ window.avviaApp = function(){
          '<div><span class="stato-n ok">In tempo</span>l\'AIS la vede ferma in banchina e ci resta fino all\'orario della visita</div>' +
          '<div><span class="stato-n conferma">Da confermare</span>i dati non si aggiornano da oltre 45 minuti: era ferma in banchina all\'ultimo aggiornamento, ma potrebbe essere partita</div>' +
          '<div><span class="stato-n rischio">A rischio</span>ferma in banchina, ma parte vicino all\'orario della visita o l\'orario non è preciso</div>' +
-         '<div><span class="stato-n probabile">Probabilmente in banchina</span>l\'AIS l\'ha vista entrare in manovra vicino alla sua banchina e poi non l\'ha più sentita: quasi certamente è attraccata (controlla su VesselFinder; non è sulla mappa né nel conteggio)</div>' +
+         '<div><span class="stato-n probabile">Probabilmente in banchina</span>l\'AIS l\'ha vista entrare in porto (o in manovra vicino alla sua banchina) e poi non l\'ha più sentita: quasi certamente è attraccata (controlla su VesselFinder; non è sulla mappa né nel conteggio)</div>' +
          '<div><span class="stato-n avvicina">In avvicinamento</span>l\'AIS la vede arrivare: non è ancora in banchina, non è sulla mappa né nel conteggio</div>' +
          '<div><span class="stato-n prevista">Non ancora in banchina</span>la dà il giornale ma l\'AIS non la vede ferma in banchina (non è sulla mappa né nel conteggio)</div>' +
          '<div><span class="stato-n prevista">Segnale perso</span>era ferma in banchina, ma da almeno 45 minuti (3 giri, di più se di solito si sente male) l\'AIS sente le altre navi e non lei: potrebbe essere partita (non è sulla mappa né nel conteggio)</div>' +
@@ -2136,6 +2141,7 @@ window.avviaApp = function(){
     if(a.ormeggiata) return t + (a.silenzio ? "ferma in banchina, poi più nessun segnale." : "ferma in banchina.");
     if(a.in_uscita) return t + "in movimento: sta lasciando la banchina.";
     if(a.attracco_probabile) return t + "in manovra vicino a " + a.banchina_probabile + ", poi più nessun segnale.";
+    if(a.entrata_probabile) return t + (a.manovra ? "in manovra dentro il porto" : "in entrata, a " + a.dist_nm + " miglia") + ", poi più nessun segnale.";
     if(a.manovra) return t + "in manovra dentro il porto.";
     if(a.ancora) return t + "ferma in rada, a " + a.dist_nm + " miglia.";
     var e = a.eta_iso ? minutiDaIso(a.eta_iso) : null;

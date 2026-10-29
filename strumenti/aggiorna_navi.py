@@ -30,6 +30,7 @@ VALIDITA_POSIZIONE = timedelta(hours=3)     # quanto vale l'ultima posizione di 
 VALIDITA_FERMA = timedelta(hours=6)         # ... e di una nave ferma alla banchina
 DISTANZA_ATTRACCO = 400                     # metri: in manovra cosi' vicino a una banchina del suo terminal = sta attraccando
 ATTESA_ATTRACCO = timedelta(minutes=20)     # dopo quanto senza segnale si dice "probabilmente in banchina"
+DISTANZA_ENTRATA = 1.5                      # miglia dall'imboccatura: diretta in porto cosi' vicino = sta entrando
 # Regola dell'assenza. Una nave ferma trasmette ogni 3 minuti: se l'AIS sente le altre navi dei moli ma non lei
 # per due giri di fila (con buona ricezione, vedi qualita_ricezione), non e' piu' li' (o non la sentiamo piu'):
 # da confermare, e se e' solo AIS esce dall'elenco.
@@ -1151,9 +1152,16 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             mie = [x for x in misura_banchine(p["lat"], p["lon"], banchine) if x["terminal"] == (n.get("dove") or {}).get("terminal")]
             if mie and mie[0]["d"] <= DISTANZA_ATTRACCO:
                 vicino = mie[0]
+        # in arrivo a meno di 1,5 miglia dall'imboccatura, diretta in porto (o in manovra dentro il porto):
+        # se poi il segnale manca, con ogni probabilita' e' entrata (Mele, 29/10: "se e' vicina al porto e si muove,
+        # molto probabilmente e' entrata")
+        d0 = distanza_nm((p["lat"], p["lon"]), IMBOCCATURA)
+        entrando = (not dove and p["sog"] >= 0.7 and "giornale" in (n.get("fonti") or ["giornale"])
+                    and not (n.get("dove") or {}).get("in_rada")
+                    and (nei_moli(p) or (d0 <= DISTANZA_ENTRATA and p["sog"] >= 2 and verso_genova(p))))
         # una nave in movimento cambia posto in fretta: la sua posizione vale 3 ore; una ferma in banchina
         # resta li' e il suo segnale puo' mancare per qualche giro: la sua posizione vale di piu'
-        if adesso - quando > (VALIDITA_FERMA if (dove or vicino) else VALIDITA_POSIZIONE):
+        if adesso - quando > (VALIDITA_FERMA if (dove or vicino or entrando) else VALIDITA_POSIZIONE):
             continue                                          # posizione vecchia: non si usa
         d = distanza_nm((p["lat"], p["lon"]), IMBOCCATURA)
         a = {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
@@ -1200,6 +1208,11 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
                 a["lontana"] = True
         elif d > 60:
             a["lontana"] = True
+        if (entrando and not a.get("attracco_probabile") and not a.get("in_uscita") and not dove
+                and adesso - quando >= ATTESA_ATTRACCO
+                and (a.get("manovra") or (a.get("eta_iso") and datetime.fromisoformat(a["eta_iso"]) <= adesso))):
+            a["entrata_probabile"] = True
+            log("entrata in porto probabile (poi nessun segnale):", n["nome"], "a %.1f miglia, %.1f nodi, ultimo segnale delle" % (d, p["sog"]), a["quando"])
         n["ais"] = a
     # navi ferme alle nostre banchine che non sono nell'elenco
     for mmsi, p in reg.items():
@@ -1737,6 +1750,18 @@ def main():
     pulizia(dati, adesso)
     if chiave_ais:
         diagnostica_moli(dati, banchine, adesso, sentite, ricezione_ok)
+    for n in sorted(dati.get("navi", []), key=lambda x: x.get("nome") or ""):
+        dubbi = []
+        if n.get("tipo") not in TIPI_VISITABILI:
+            dubbi.append("tipo del giornale '%s'" % (n.get("tipo") or "illeggibile"))
+        if not imo_valido(n.get("imo")):
+            dubbi.append("IMO non letto")
+        if not (dati.get("statici") or {}).get(n.get("mmsi") or ""):
+            dubbi.append("l'AIS non ne conosce tipo e misure")
+        if dubbi and not n.get("nota") == NOTA_PAX_AIS:
+            log("da verificare:", n.get("nome"), "|", (n.get("dove") or {}).get("terminal"), "|", n.get("accosto") or "", "|", "; ".join(dubbi))
+        elif n.get("nota") == NOTA_PAX_AIS:
+            log("da verificare:", n.get("nome"), "|", (n.get("dove") or {}).get("terminal"), "| l'AIS la dichiara passeggeri: e' un traghetto con merci?")
     for n in sorted(dati.get("navi", []), key=lambda x: x.get("nome") or ""):
         ultimo = (dati.get("registro") or {}).get(n.get("mmsi") or "", {}).get("quando")
         eta_seg = "%d min" % ((adesso - datetime.fromisoformat(ultimo)).total_seconds() // 60) if ultimo else "mai"

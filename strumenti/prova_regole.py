@@ -181,7 +181,8 @@ class PresenzaInBanchina(unittest.TestCase):
     # --- quanto vale una posizione
     def test_posizione_di_nave_ferma_vale_sei_ore_quella_in_movimento_tre(self):
         for minuti, sog, atteso in ((5 * 60, 0.0, True), (7 * 60, 0.0, False), (2 * 60, 8.0, True), (4 * 60, 8.0, False)):
-            d = {"navi": [self.nave()], "statici": {}, "registro": {"247000009": posizione(self.adesso, minuti, sog=sog, cog=0)}}
+            lat = 44.4005 if sog == 0 else 44.30                       # in movimento: in mare, fuori dal porto
+            d = {"navi": [self.nave()], "statici": {}, "registro": {"247000009": posizione(self.adesso, minuti, lat=lat, sog=sog, cog=0)}}
             A.aggiorna_presenze(d, BANCHINE_PROVA, self.adesso)
             self.assertEqual("ais" in d["navi"][0], atteso, (minuti, sog))
 
@@ -1204,6 +1205,39 @@ class DragheEAttracchi(unittest.TestCase):
         d = self.dati(60, lon=8.9150)                                    # circa 1,2 km a est
         A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
         self.assertNotIn("attracco_probabile", d["navi"][0]["ais"])
+
+
+class EntrataProbabile(unittest.TestCase):
+    """Mele, 29/10: vicina al porto e in movimento verso l'imboccatura, poi nessun segnale = molto probabilmente entrata."""
+    T = quando("2026-10-29", "14:00")
+    MMSI = "247000020"
+
+    def dati(self, minuti_fa, lat, lon, sog, cog, **extra):
+        n = {"nome": "OMEGA", "imo": "9142459", "mmsi": self.MMSI, "tipo": "CONT.", "fonti": ["giornale"], "giorno": "2026-10-29",
+             "arrivo": "13.00", "arrivo_giorno": "2026-10-29", "dove": {"terminal": "sech", "molo": "Sanita", "lato": "ponente"}}
+        n.update(extra)
+        return {"navi": [n], "escluse": [], "statici": {self.MMSI: {"imo": "9142459", "nome": "OMEGA", "tipo": 70, "lung": 200}},
+                "registro": {self.MMSI: posizione(self.T, minuti_fa, lat=lat, lon=lon, sog=sog, cog=cog)}}
+
+    def test_diretta_in_porto_a_un_miglio_poi_silenzio(self):
+        d = self.dati(40, 44.3830, 8.8960, 8.0, 0)                       # 0,9 miglia a sud, rotta nord
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        self.assertTrue(d["navi"][0]["ais"]["entrata_probabile"])
+
+    def test_segnale_fresco_o_lontana_o_in_rada_no(self):
+        for args, extra in (((5, 44.3830, 8.8960, 8.0, 0), {}),          # appena sentita: e' ancora in arrivo
+                            ((40, 44.3500, 8.8960, 8.0, 0), {}),         # a 2,9 miglia: puo' andare in rada
+                            ((40, 44.3830, 8.8960, 8.0, 180), {}),       # rotta verso il largo
+                            ((40, 44.3830, 8.8960, 8.0, 0), {"dove": {"terminal": "sech", "in_rada": True}})):
+            d = self.dati(*args, **extra)
+            A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+            self.assertNotIn("entrata_probabile", d["navi"][0].get("ais", {}), args)
+
+    def test_in_manovra_dentro_il_porto_lontano_dalla_sua_banchina(self):
+        d = self.dati(40, 44.4050, 8.9100, 1.5, 90)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        a = d["navi"][0]["ais"]
+        self.assertTrue(a["manovra"] and a["entrata_probabile"])
 
 
 if __name__ == "__main__":
