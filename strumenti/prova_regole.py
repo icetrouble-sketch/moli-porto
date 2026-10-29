@@ -74,31 +74,29 @@ class Esclusioni(unittest.TestCase):
         A.aggiorna_presenze(d, banchine, adesso)
         self.assertEqual(d["navi"], [])
 
-    def test_ro_ro_con_passeggeri_dal_testo(self):
+    def test_ro_ro_con_passeggeri_si_visitano(self):
+        """Mele, 29/10: se portano merci si visitano anche con i passeggeri."""
         for tipo in ("RO/PAX", "RO-PAX", "RO/RO PAX", "RO/RO PASS."):
             navi, escluse = self.navi(riga("GAMMA", "9074729", tipo, "ARRIVI", "10.00"))
-            self.assertEqual(navi, {}, tipo)
+            self.assertIn("GAMMA", navi, tipo)
+            self.assertEqual(escluse, [], tipo)
 
-    def test_ro_ro_cargo_resta_con_nota_poi_si_decide_con_l_ais(self):
-        navi, _ = self.navi(riga("DELTA", "9074729", "RO/RO", "ARRIVI", "10.00"))
-        d = {"navi": [navi["DELTA"]], "statici": {}}
-        A.escludi_non_visitabili(d, quando("2026-10-27", "09:00"))
-        self.assertEqual(len(d["navi"]), 1)
-        self.assertIn(A.NOTA_RORO, d["navi"][0]["nota"])          # AIS non ancora: resta, da controllare
-        d["navi"][0]["mmsi"] = "247000001"
-        d["statici"]["247000001"] = {"tipo": 70}                  # AIS: nave da carico
-        A.escludi_non_visitabili(d, quando("2026-10-27", "09:30"))
-        self.assertEqual(len(d["navi"]), 1)
-        self.assertNotIn("nota", d["navi"][0])                    # confermata cargo: la nota sparisce
-
-    def test_ro_ro_passeggeri_per_l_ais(self):
-        for t in (60, 61, 69):
+    def test_ro_ro_con_tipo_ais_passeggeri_resta(self):
+        for t in (60, 61, 69, 70, 0):
             navi, _ = self.navi(riga("EPSILON", "9074729", "RO/RO", "ARRIVI", "10.00"))
             d = {"navi": [navi["EPSILON"]], "statici": {"247000002": {"tipo": t}}}
             d["navi"][0]["mmsi"] = "247000002"
             A.escludi_non_visitabili(d, quando("2026-10-27", "09:00"))
-            self.assertEqual(d["navi"], [], t)
-            self.assertTrue(A.e_esclusa(d, "9074729", "EPSILON", "247000002"))
+            self.assertEqual(len(d["navi"]), 1, t)
+            self.assertNotIn("nota", d["navi"][0])
+
+    def test_le_ro_ro_escluse_prima_si_rimettono(self):
+        adesso = quando("2026-10-29", "13:00")
+        d = {"navi": [], "statici": {}, "escluse": [
+            {"nome": "ULYSSE", "imo": "9142459", "motivo": "ro-ro con passeggeri (tipo AIS: passeggeri)", "quando": adesso.isoformat()},
+            {"nome": "SOLO PAX", "imo": "9074729", "motivo": "nave passeggeri o da crociera", "quando": adesso.isoformat()}]}
+        A.escludi_non_visitabili(d, adesso)
+        self.assertEqual([e["nome"] for e in d["escluse"]], ["SOLO PAX"])
 
     def test_chimichiera_gia_in_elenco_viene_tolta(self):
         d = {"navi": [{"nome": "ZETA", "imo": "", "tipo": "CHIM."}, {"nome": "ETA", "imo": "", "tipo": "CONT."}], "statici": {}}
@@ -274,17 +272,23 @@ class NaviPiccoleEPasseggeri(unittest.TestCase):
         self.assertEqual([n["nome"] for n in prova("rinfuse", 70, 70)["navi"]], ["COSTIERA"])
         self.assertEqual(prova("rinfuse", 40, 70)["navi"], [])      # troppo piccola anche per i Rinfuse
         self.assertEqual(prova("imt", 70, 70)["navi"], [])           # altrove servono 100 m
-        self.assertEqual(prova("rinfuse", 200, 65)["navi"], [])      # passeggeri: non entra
+        self.assertEqual([n["tipo"] for n in prova("rinfuse", 200, 65)["navi"]], ["RO/RO"])   # passeggeri per l'AIS: traghetto con merci
         d = prova("rinfuse", 70, 70)
         A.pulizia(d, adesso)
         self.assertEqual(len(d["navi"]), 1)                          # e la pulizia non la toglie
 
-    def test_passeggeri_visti_solo_dall_ais_sono_da_non_visitare(self):
+    def test_passeggeri_visti_solo_dall_ais_entrano_come_ro_ro_con_nota(self):
+        """Ferma a un nostro terminal merci, una nave che l'AIS dichiara passeggeri e' quasi sempre un traghetto con merci."""
         adesso = quando("2026-10-27", "10:00")
         d = {"navi": [], "escluse": [], "statici": {"247000011": {"imo": "9074729", "nome": "TRAGHETTO", "tipo": 60, "lung": 180}},
              "registro": {"247000011": posizione(adesso)}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, adesso)
+        self.assertEqual([(n["nome"], n["tipo"]) for n in d["navi"]], [("TRAGHETTO", "RO/RO")])
+        self.assertEqual(d["navi"][0]["nota"], A.NOTA_PAX_AIS)
+        A.escludi_non_visitabili(d, adesso)
+        self.assertEqual(len(d["navi"]), 1)
         A.costruisci_non_visitare(d, BANCHINE_PROVA, adesso)
-        self.assertEqual([(n["nome"], n["motivo"]) for n in d["non_visitare"]], [("TRAGHETTO", "nave passeggeri o da crociera")])
+        self.assertEqual(d["non_visitare"], [])
 
 
 class RegolaDellAssenza(unittest.TestCase):

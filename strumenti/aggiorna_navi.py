@@ -370,7 +370,11 @@ def da_a(accosto):
 # Oltre ai mezzi di servizio e ai mezzi della diga (esclusi dalla zona del giornale):
 # - le navi chemical (chimichiere);
 # - le RO/RO che portano passeggeri (ro-pax, traghetti).
-NOTA_RORO = "Ro-ro: né il giornale né l'AIS dicono ancora se porta passeggeri, da controllare."
+# Regola di Mele del 29/10: le navi che portano merci si visitano anche se portano passeggeri (ro-ro con passeggeri,
+# ro-pax, traghetti con camion e auto); non si visitano solo quelle che portano soltanto passeggeri (passeggeri, crociere).
+NOTA_RORO = "Ro-ro: né il giornale né l'AIS dicono ancora se porta passeggeri, da controllare."     # (non piu' usata: si toglie)
+NOTA_PAX_AIS = ("L'AIS la dichiara nave passeggeri: a questi terminal di solito è un traghetto con merci (ro-pax), che si visita. "
+                "Se porta solo passeggeri non si visita.")
 # Cisterne (TANK) escluse per ora, in attesa di conferma di Mele: per rimetterle in elenco
 # basta portare questo interruttore a False.
 ESCLUDI_CISTERNE = True
@@ -407,8 +411,8 @@ def e_cisterna(tipo):
 
 
 def e_passeggeri(tipo):
-    """Navi passeggeri e da crociera (PASS., CRUISE): non sono il nostro obiettivo.
-    Le ro-ro con passeggeri sono gia' escluse a parte."""
+    """Navi passeggeri e da crociera (PASS., CRUISE): portano solo passeggeri, non si visitano.
+    Le ro-ro con passeggeri (RO/PAX, RO/RO PASS.) invece si visitano (Mele, 29/10)."""
     t = lettere(tipo)
     return t.startswith("PASS") or "CRUISE" in t or t.startswith("CROCIER")
 
@@ -464,9 +468,7 @@ def motivo_esclusione(n, dati):
             return e["motivo"]
     if e_chimichiera(tipo):
         return "nave chemical"
-    if ro_ro_pax_dal_testo(tipo):
-        return "ro-ro con passeggeri (dal giornale)"
-    if e_passeggeri(tipo):
+    if e_passeggeri(tipo) and not ro_ro_pax_dal_testo(tipo):
         return "nave passeggeri o da crociera"
     if ESCLUDI_CISTERNE and e_cisterna(tipo):
         return "cisterna (da confermare)"
@@ -475,8 +477,6 @@ def motivo_esclusione(n, dati):
     # giornale scrive CONT., BULK, RO/RO, GAS... resta, anche se l'AIS la dichiara cisterna
     if ESCLUDI_CISTERNE and 80 <= t <= 89 and "giornale" in (n.get("fonti") or ["giornale"]) and not tipo_leggibile(tipo):
         return "cisterna (tipo AIS, il giornale lo scrive " + (tipo or "illeggibile") + ")"
-    if tipo in ("RO/RO", "") and 60 <= t <= 69:
-        return "ro-ro con passeggeri (tipo AIS: passeggeri)"
     return None
 
 
@@ -492,7 +492,10 @@ def tipo_leggibile(tipo):
 def esclusione_superata(e):
     """Esclusioni fatte con la regola di prima (fino al 28/10): una nave che il giornale scriveva con un tipo chiaro
     (CONT., BULK, GAS...) era esclusa solo perche' l'AIS la dichiarava cisterna. Ora quelle navi si visitano."""
-    m = re.fullmatch(r"cisterna \(tipo AIS, il giornale lo scrive (.*)\)", e.get("motivo") or "")
+    motivo = e.get("motivo") or ""
+    if motivo.startswith("ro-ro con passeggeri"):
+        return True                                   # fino al 29/10 si escludevano: ora si visitano (Mele)
+    m = re.fullmatch(r"cisterna \(tipo AIS, il giornale lo scrive (.*)\)", motivo)
     return bool(m) and tipo_leggibile(m.group(1))
 
 
@@ -520,7 +523,7 @@ def escludi_non_visitabili(dati, adesso):
     da giri precedenti) e segna le ro-ro di cui non si sa ancora nulla."""
     superate = [e for e in dati.get("escluse", []) if esclusione_superata(e)]
     if superate:
-        log("non piu' escluse (il giornale ne scrive il tipo, l'AIS da solo non basta):", ", ".join(e.get("nome") or "?" for e in superate))
+        log("non piu' escluse (regole nuove: tipo del giornale, ro-ro con passeggeri):", ", ".join(e.get("nome") or "?" for e in superate))
         dati["escluse"] = [e for e in dati["escluse"] if not esclusione_superata(e)]
     tenute = []
     for n in dati.get("navi", []):
@@ -529,15 +532,10 @@ def escludi_non_visitabili(dati, adesso):
             log("esclusa:", n.get("nome"), "-", motivo)
             registra_esclusa(dati, n, motivo, adesso)
             continue
-        if n.get("tipo") == "RO/RO":
-            noto = tipo_ais_numero((dati.get("statici") or {}).get(n.get("mmsi") or "")) > 0
-            nota = n.get("nota") or ""
-            if not noto and NOTA_RORO not in nota:
-                n["nota"] = (nota + " " + NOTA_RORO).strip()
-            elif noto and NOTA_RORO in nota:
-                n["nota"] = nota.replace(NOTA_RORO, "").strip()
-                if not n["nota"]:
-                    n.pop("nota")
+        if NOTA_RORO in (n.get("nota") or ""):         # la nota "da controllare se porta passeggeri" non serve piu'
+            n["nota"] = n["nota"].replace(NOTA_RORO, "").strip()
+            if not n["nota"]:
+                n.pop("nota")
         tenute.append(n)
     dati["navi"] = tenute
     limite = (adesso - timedelta(days=14)).isoformat()
@@ -583,8 +581,7 @@ def navi_dal_giornale(righe, data):
                                 "in_mappa": False})
             continue
         motivo = ("nave chemical" if e_chimichiera(r["tipo"]) or e_chimichiera(tipo)
-                  else "ro-ro con passeggeri (dal giornale)" if ro_ro_pax_dal_testo(r["tipo"])
-                  else "nave passeggeri o da crociera" if e_passeggeri(r["tipo"]) or e_passeggeri(tipo)
+                  else "nave passeggeri o da crociera" if (e_passeggeri(r["tipo"]) or e_passeggeri(tipo)) and not ro_ro_pax_dal_testo(r["tipo"])
                   else "cisterna (da confermare)" if ESCLUDI_CISTERNE and (e_cisterna(tipo) or e_cisterna(r["tipo"])) else None)
         if motivo:
             nome_e = pulisci_nome(r["nave"])
@@ -985,14 +982,14 @@ def scarto_solo_ais(dati, mmsi, p, dove, adesso, ricezione_ok=None):
     minima = lunghezza_minima_ais(dove["terminal"], tipo_a)
     if (s.get("lung") or 0) < minima:
         return "lunga %s m, sotto il minimo di %s m" % (s.get("lung") or 0, minima)
-    if tipo_a == "PASS." or (ESCLUDI_CISTERNE and tipo_a == "TANK"):
-        return "passeggeri o cisterna: non si visitano"
+    if ESCLUDI_CISTERNE and tipo_a == "TANK":
+        return "cisterna: non si visita"
     nome = (s.get("nome") or p.get("nome") or "").upper()
     if not nome:
         return "senza nome"
     imo = s.get("imo") if imo_valido(s.get("imo")) else ""
     if e_esclusa(dati, imo, nome, mmsi):
-        return "nella lista delle escluse (chemical o ro-ro con passeggeri)"
+        return "nella lista delle escluse (chemical, cisterna, solo passeggeri, mezzi di lavoro)"
     return None
 
 
@@ -1225,7 +1222,9 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             "(nave lunga, oltre la fine del tratto di %d m)" % dove["oltre_m"] if dove.get("oltre_m") else "")
         dati["navi"].append({
             "nome": nome, "imo": s.get("imo") if imo_valido(s.get("imo")) else "",
-            "mmsi": mmsi, "tipo": tipo_ais(s.get("tipo")), "loa": s.get("lung") or None, "larg": s.get("larg") or None,
+            "mmsi": mmsi, "tipo": "RO/RO" if tipo_ais(s.get("tipo")) == "PASS." else tipo_ais(s.get("tipo")),
+            **({"nota": NOTA_PAX_AIS} if tipo_ais(s.get("tipo")) == "PASS." else {}),
+            "loa": s.get("lung") or None, "larg": s.get("larg") or None,
             "accosto": dove["molo"] + " " + ("TESTATA" if dove["lato"] == "testata" else dove["lato"][:3].upper() + "."),
             "dove": {"terminal": dove["terminal"], "molo": dove["molo"],
                      "lato": None if dove["lato"] == "testata" else dove["lato"],
@@ -1239,7 +1238,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
 
 
 def costruisci_non_visitare(dati, banchine, adesso, ricezione_ok=None):
-    """Le navi che non si visitano (chemical, ro-ro con passeggeri, cisterne) ma che l'AIS vede
+    """Le navi che non si visitano (chemical, solo passeggeri, cisterne) ma che l'AIS vede
     davvero ferme a una banchina della mappa: l'app le disegna in grigio con 'da non visitare',
     cosi' chi guarda sa che sono lì e che si lasciano stare. Se non sono ferme alla banchina
     non si mettono, anche se il giornale le prevede."""
@@ -1261,9 +1260,7 @@ def costruisci_non_visitare(dati, banchine, adesso, ricezione_ok=None):
         t = tipo_ais(s.get("tipo"))
         if mmsi in trovate or (s.get("lung") or 0) < LUNGHEZZA_MINIMA_AIS:
             continue
-        if t == "PASS.":
-            trovate[mmsi] = (s.get("nome"), s.get("imo"), "PASS.", "nave passeggeri o da crociera")
-        elif t == "TANK" and ESCLUDI_CISTERNE:
+        if t == "TANK" and ESCLUDI_CISTERNE:
             trovate[mmsi] = (s.get("nome"), s.get("imo"), "TANK", "cisterna (da confermare)")
     risultato = []
     for mmsi, voce in trovate.items():
@@ -1730,7 +1727,7 @@ def main():
     else:
         dati["ais"] = False
         sentite, ricezione_ok = None, None
-    escludi_non_visitabili(dati, adesso)      # chemical e ro-ro con passeggeri (dopo l'AIS: serve il suo tipo)
+    escludi_non_visitabili(dati, adesso)      # chemical, solo passeggeri, cisterne (dopo l'AIS: serve il suo tipo)
     costruisci_non_visitare(dati, banchine, adesso, ricezione_ok)   # quelle escluse che sono davvero ferme alle nostre banchine
     applica_taratura(dati)
     riassunto_taratura(dati)
