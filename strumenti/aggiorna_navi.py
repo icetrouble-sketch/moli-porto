@@ -1167,6 +1167,15 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             n["imo"] = s["imo"]
         if not n.get("loa") and s.get("lung"):
             n["loa"], n["larg"] = s["lung"], s.get("larg") or None
+        # tipo del giornale illeggibile (es. CAPE SPENCER, 29/10): si mostra quello dell'AIS (cisterna o passeggeri
+        # seguono le loro regole: la cisterna resta esclusa, la passeggeri diventa ro-ro con la nota)
+        if n.get("tipo") not in TIPI and n.get("tipo") != "M/N" and tipo_ais(s.get("tipo")):
+            ta = tipo_ais(s.get("tipo"))
+            log("tipo dall'AIS (il giornale non si legge):", n["nome"], repr(n.get("tipo")), "->", ta)
+            n["tipo_giornale"] = n.get("tipo") or ""
+            n["tipo"] = "RO/RO" if ta == "PASS." else ta
+            if ta == "PASS.":
+                n["nota"] = NOTA_PAX_AIS
         p = reg.get(mmsi)
         if not p:
             continue

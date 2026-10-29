@@ -1324,5 +1324,20 @@ class CorrezioniSera29(unittest.TestCase):
         self.assertEqual(d["navi"][0]["tipo"], "M/N")
 
 
+class TipoIlleggibile(unittest.TestCase):
+    def test_tipo_illeggibile_prende_quello_dell_ais(self):
+        t = quando("2026-10-29", "21:00")
+        for ta, atteso in ((70, "CARGO"), (84, "TANK"), (65, "RO/RO")):
+            d = {"navi": [{"nome": "CAPE SPENCER", "imo": "9950129", "mmsi": "1", "tipo": "?", "fonti": ["giornale"], "dove": {"terminal": "spinelli"}}],
+                 "statici": {"1": {"imo": "9950129", "nome": "CAPE SPENCER", "tipo": ta, "lung": 180}}, "registro": {}}
+            A.aggiorna_presenze(d, BANCHINE_PROVA, t)
+            self.assertEqual(d["navi"][0]["tipo"], atteso, ta)
+        A.escludi_non_visitabili(d, t)                               # la passeggeri resta (ro-ro con la nota)
+        self.assertEqual(len(d["navi"]), 1)
+        d = {"navi": [{"nome": "X", "mmsi": "1", "tipo": "M/N", "fonti": ["giornale"], "dove": {}}], "statici": {"1": {"tipo": 70}}, "registro": {}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, t)
+        self.assertEqual(d["navi"][0]["tipo"], "M/N")                 # motonave: resta com'e'
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
