@@ -28,6 +28,8 @@ IMBOCCATURA = (44.3985, 8.8960)
 MOLI_BOX = (44.3960, 44.4125, 8.8720, 8.9200)
 VALIDITA_POSIZIONE = timedelta(hours=3)     # quanto vale l'ultima posizione di una nave in movimento
 VALIDITA_FERMA = timedelta(hours=6)         # ... e di una nave ferma alla banchina
+DISTANZA_ATTRACCO = 400                     # metri: in manovra cosi' vicino a una banchina del suo terminal = sta attraccando
+ATTESA_ATTRACCO = timedelta(minutes=20)     # dopo quanto senza segnale si dice "probabilmente in banchina"
 # Regola dell'assenza. Una nave ferma trasmette ogni 3 minuti: se l'AIS sente le altre navi dei moli ma non lei
 # per due giri di fila (con buona ricezione, vedi qualita_ricezione), non e' piu' li' (o non la sentiamo piu'):
 # da confermare, e se e' solo AIS esce dall'elenco.
@@ -424,9 +426,42 @@ def tipo_ais_numero(s):
         return 0
 
 
+# Navi da non mettere mai, indicate da Mele (IMO o MMSI, e il nome per quando mancano). Le draghe e i mezzi di
+# lavoro a volte si dichiarano all'AIS come "cargo" e, ferme a una banchina, entravano come navi da visitare.
+ESCLUSE_FISSE = [
+    {"nome": "PALMIRO Z", "imo": "8334964", "mmsi": "247388500", "motivo": "mezzo di lavoro: draga (Mele, 29/10)"},
+]
+# motivi delle navi che non sono navi da visitare: non si mostrano neanche in grigio "da non visitare"
+MOTIVI_NASCOSTI = ("mezzo ",)
+
+
+def esclusione_fissa(imo="", nome="", mmsi=""):
+    for e in ESCLUSE_FISSE:
+        if (imo and imo == e["imo"]) or (mmsi and mmsi == e["mmsi"]) or (nome and stessa_nave(nome, imo, e["nome"], e["imo"])):
+            return e["motivo"]
+    return None
+
+
+def esclusa_di(dati, imo, nome, mmsi=None):
+    """L'esclusione registrata per questa nave (o None)."""
+    for e in dati.get("escluse", []):
+        if (mmsi and e.get("mmsi") == mmsi) or (imo and e.get("imo") == imo) \
+                or stessa_nave(e.get("nome"), e.get("imo"), nome, imo):
+            return e
+    return None
+
+
 def motivo_esclusione(n, dati):
     """Perche' una nave dell'elenco non si visita (None se si visita)."""
     tipo = n.get("tipo") or ""
+    fissa = esclusione_fissa(n.get("imo") or "", n.get("nome") or "", n.get("mmsi") or "")
+    if fissa:
+        return fissa
+    if "giornale" not in (n.get("fonti") or ["giornale"]):
+        # vista solo dall'AIS: se il giornale la mette tra i mezzi della diga o di servizio, non e' una nave da visitare
+        e = esclusa_di(dati, n.get("imo") or "", n.get("nome") or "", n.get("mmsi") or "")
+        if e and str(e.get("motivo") or "").startswith(MOTIVI_NASCOSTI):
+            return e["motivo"]
     if e_chimichiera(tipo):
         return "nave chemical"
     if ro_ro_pax_dal_testo(tipo):
@@ -477,11 +512,7 @@ def registra_esclusa(dati, n, motivo, adesso=None):
 
 
 def e_esclusa(dati, imo, nome, mmsi=None):
-    for e in dati.get("escluse", []):
-        if (mmsi and e.get("mmsi") == mmsi) or (imo and e.get("imo") == imo) \
-                or stessa_nave(e.get("nome"), e.get("imo"), nome, imo):
-            return True
-    return False
+    return esclusa_di(dati, imo, nome, mmsi) is not None or bool(esclusione_fissa(imo or "", nome or "", mmsi or ""))
 
 
 def escludi_non_visitabili(dati, adesso):
@@ -530,14 +561,26 @@ def navi_dal_giornale(righe, data):
         zona = r.get("zona") or "PRINCIPALE"
         if "BULK" in lettere(r["tipo"]):
             log("bulk nel giornale:", pulisci_nome(r["nave"]), "| zona", zona, "| accosto", r["accosto"])
+        if zona == "MEZZI DIGA":
+            # draghe e mezzi del cantiere della diga: non si visitano, ma l'AIS li vede fermi alle banchine
+            # (e alcuni si dichiarano "cargo"): si ricordano come esclusi
+            nome_m = pulisci_nome(r["nave"])
+            if len(lettere(nome_m)) >= 4:
+                escluse.append({"nome": nome_m, "imo": r["imo"] if r["imo_ok"] else "", "motivo": "mezzo della diga (dal giornale)",
+                                "in_mappa": False})
+            continue
         if zona not in ZONE_BUONE:
-            continue                                   # Multedo, Voltri, mezzi della diga
+            continue                                   # Multedo, Voltri
         tipo = pulisci_tipo(r["tipo"])
         if tipo and tipo not in TIPI and "".join(c for c in tipo if c.isalpha()):
             log("tipo non riconosciuto:", pulisci_nome(r["nave"]), repr(r["tipo"]), "| zona", zona)
         if e_mezzo_di_servizio(r["tipo"]):
             if r.get("dove"):
                 scartate.append(pulisci_nome(r["nave"]) + " (" + (r["tipo"] or "").strip() + ")")
+            nome_m = pulisci_nome(r["nave"])
+            if len(lettere(nome_m)) >= 4:
+                escluse.append({"nome": nome_m, "imo": r["imo"] if r["imo_ok"] else "", "motivo": "mezzo di servizio (dal giornale)",
+                                "in_mappa": False})
             continue
         motivo = ("nave chemical" if e_chimichiera(r["tipo"]) or e_chimichiera(tipo)
                   else "ro-ro con passeggeri (dal giornale)" if ro_ro_pax_dal_testo(r["tipo"])
@@ -1104,9 +1147,16 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             continue
         quando = datetime.fromisoformat(p["quando"])
         dove = dove_nave(dati, mmsi, p, banchine, n.get("loa")) if p["sog"] < 0.7 else None
+        # in manovra dentro il porto a poche centinaia di metri da una banchina del suo terminal: se poi il segnale
+        # manca, quasi certamente ha attraccato li' (in alcune banchine aisstream non riceve le navi ormeggiate)
+        vicino = None
+        if not dove and 0.7 <= p["sog"] < 3 and nei_moli(p) and "giornale" in (n.get("fonti") or ["giornale"]):
+            mie = [x for x in misura_banchine(p["lat"], p["lon"], banchine) if x["terminal"] == (n.get("dove") or {}).get("terminal")]
+            if mie and mie[0]["d"] <= DISTANZA_ATTRACCO:
+                vicino = mie[0]
         # una nave in movimento cambia posto in fretta: la sua posizione vale 3 ore; una ferma in banchina
         # resta li' e il suo segnale puo' mancare per qualche giro: la sua posizione vale di piu'
-        if adesso - quando > (VALIDITA_FERMA if dove else VALIDITA_POSIZIONE):
+        if adesso - quando > (VALIDITA_FERMA if (dove or vicino) else VALIDITA_POSIZIONE):
             continue                                          # posizione vecchia: non si usa
         d = distanza_nm((p["lat"], p["lon"]), IMBOCCATURA)
         a = {"lat": round(p["lat"], 5), "lon": round(p["lon"], 5), "vel": round(p["sog"], 1),
@@ -1125,7 +1175,8 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             n.pop("uscita_vista", None)
         elif p["stato"] == 1 or (d < 8 and p["sog"] < 0.7):
             a["ancora"] = True
-        elif p["sog"] >= 2:
+        elif p["sog"] >= 2 or nei_moli(p):
+            # sopra i 2 nodi, oppure piano (0,7-2 nodi) ma dentro il porto: in manovra (prima a 0,7-2 nodi non si diceva niente)
             dentro = MOLI_BOX[0] <= p["lat"] <= MOLI_BOX[1] and MOLI_BOX[2] <= p["lon"] <= MOLI_BOX[3]
             era_ferma = False
             if n.get("visto_banchina"):
@@ -1136,6 +1187,13 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
                 n["uscita_vista"] = quando.isoformat()
             elif dentro:
                 a["manovra"] = True
+                if vicino and adesso - quando >= ATTESA_ATTRACCO:
+                    # entrata in manovra vicino alla sua banchina e poi nessun segnale: con ogni probabilita' ha attraccato
+                    a["attracco_probabile"] = True
+                    a["banchina_probabile"] = vicino["molo"] + " " + vicino["lato"]
+                    a["m_banchina"] = int(round(vicino["d"]))
+                    log("attracco probabile (poi nessun segnale):", n["nome"], vicino["molo"], vicino["lato"],
+                        "a %d m, ultimo segnale delle" % vicino["d"], a["quando"])
             elif verso_genova(p) and d < 900:
                 # in rotta verso Genova: ora stimata d'arrivo (+15% per gli ultimi rallentamenti)
                 arrivo = quando + timedelta(hours=d / p["sog"] * 1.15)
@@ -1192,7 +1250,13 @@ def costruisci_non_visitare(dati, banchine, adesso, ricezione_ok=None):
         mmsi = e.get("mmsi") or trova_mmsi({"imo": e.get("imo") or "", "nome": e.get("nome") or ""}, dati)
         if mmsi:
             e["mmsi"] = mmsi
-            trovate[mmsi] = (e.get("nome"), e.get("imo"), e.get("tipo"), e.get("motivo"))
+            if str(e.get("motivo") or "").startswith(MOTIVI_NASCOSTI):
+                trovate[mmsi] = None                          # draghe e mezzi di lavoro: non si mostrano proprio
+            else:
+                trovate[mmsi] = (e.get("nome"), e.get("imo"), e.get("tipo"), e.get("motivo"))
+    for e in ESCLUSE_FISSE:
+        if e["mmsi"]:
+            trovate[e["mmsi"]] = None
     for mmsi, s in sta.items():                               # cisterne e passeggeri che il giornale non nomina
         t = tipo_ais(s.get("tipo"))
         if mmsi in trovate or (s.get("lung") or 0) < LUNGHEZZA_MINIMA_AIS:
@@ -1202,7 +1266,10 @@ def costruisci_non_visitare(dati, banchine, adesso, ricezione_ok=None):
         elif t == "TANK" and ESCLUDI_CISTERNE:
             trovate[mmsi] = (s.get("nome"), s.get("imo"), "TANK", "cisterna (da confermare)")
     risultato = []
-    for mmsi, (nome, imo, tipo, motivo) in trovate.items():
+    for mmsi, voce in trovate.items():
+        if voce is None:
+            continue
+        nome, imo, tipo, motivo = voce
         p = reg.get(mmsi)
         if not p or mmsi in in_elenco or p["sog"] >= 0.7:
             continue

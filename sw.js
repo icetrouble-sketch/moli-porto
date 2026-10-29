@@ -3,7 +3,7 @@
    I dati delle navi (navi.enc.json) non passano da qui: li tiene l'app, una copia
    sola (prima se ne salvava una nuova a ogni caricamento, perche' l'indirizzo
    cambia ogni volta). Le richieste ad altri siti (foglio delle visite) non si salvano. */
-const CACHE = "moli-porto-22";
+const CACHE = "moli-porto-23";
 const FILE = ["./", "./index.html", "./dati.enc.js", "./contesto.js",
               "./manifest.webmanifest", "./icone/icona-180.png", "./icone/icona-192.png"];
 

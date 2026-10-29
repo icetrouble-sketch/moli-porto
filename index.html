@@ -324,6 +324,7 @@
   .stato-n.rischio{background:rgba(236,94,39,.13);color:var(--arancio-scuro)}
   .stato-n.prevista,.stato-n.partita,.stato-n.uscita,.stato-n.nv{background:#ECE9E1;color:#6F6A61}
   .stato-n.rada,.stato-n.avvicina{background:#E6EEF6;color:#3B5F86}
+  .stato-n.probabile{background:#E3EDF7;color:#2E4A69;box-shadow:inset 0 0 0 1px rgba(59,95,134,.45)}
   .stato-n.scelta-leg{background:#FFF6D6;color:#8A6500}
   .stato-n.conferma{background:#FFF1E0;color:#9A4A12;box-shadow:inset 0 0 0 1px rgba(184,70,26,.45)}
   .nv.spenta{box-shadow:none;background:#FAF9F5}
@@ -1724,13 +1725,20 @@ window.avviaApp = function(){
                d: "L'ultimo segnale AIS è delle " + ais.quando.replace(".", ":") + ": da allora l'AIS sente le altre navi del porto ma non lei. " +
                   "Potrebbe essere già partita: controlla su VesselFinder. Finché non la risente, non la segno sulla mappa né la conto." };
     if(!ferma){
+      if(ais && ais.attracco_probabile)
+        return { c: "probabile", t: "Probabilmente in banchina",
+                 d: "Alle " + ais.quando.replace(".", ":") + " l'AIS la vedeva in manovra a " + ais.m_banchina + " m da " + ais.banchina_probabile +
+                    ", poi più nessun segnale: in alcune banchine il servizio AIS che usiamo non riceve le navi ormeggiate. " +
+                    "Quasi certamente ha attraccato: controlla su VesselFinder. Non la segno sulla mappa né la conto finché l'AIS non la vede ferma." };
       if(ais && (ais.manovra || ais.eta_iso))
         return { c: "avvicina", t: "In avvicinamento",
                  d: ais.manovra ? "Alle " + ais.quando.replace(".", ":") + " l'AIS la vede in manovra dentro il porto: sta per attraccare."
                                 : "Alle " + ais.quando.replace(".", ":") + " l'AIS la vede in navigazione verso Genova" + (a ? ", arrivo stimato " + quando(a) : "") + ". Non è ancora in banchina." };
+      var soloAis = n.fonti && n.fonti.indexOf("giornale") < 0;
       return { c: "prevista", t: "Non ancora in banchina",
-               d: (a ? "Il giornale la dà in arrivo " + quando(a) + ". " : "Il giornale la dà in porto. ") +
-                  "L'AIS non l'ha vista ferma in banchina: finché non la vede, non la segno sulla mappa né la conto." };
+               d: soloAis ? "Il giornale non la nomina: l'AIS l'aveva vista ferma in banchina, ora non più. Finché non la rivede ferma, non la segno sulla mappa né la conto."
+                          : (a ? "Il giornale la dà in arrivo " + quando(a) + ". " : "Il giornale la dà in porto. ") +
+                            "L'AIS non l'ha vista ferma in banchina: finché non la vede, non la segno sulla mappa né la conto." };
     }
     if(p && V >= p[0] - 60)
       return { c: "rischio", t: "A rischio", d: p[2] ? "Parte " + quando(p) + ": l'orario non è preciso."
@@ -2040,7 +2048,7 @@ window.avviaApp = function(){
          '<div><b>' + (conti.avvicina + conti.prevista) + '</b><span>Non ancora qui</span></div>' +
          '<div><b>' + conti.fatte + '</b><span>Visitate</span></div></div>';
 
-    var ordine = { ok: 0, conferma: 0, rischio: 1, avvicina: 2, prevista: 3, rada: 4, uscita: 5, nv: 6, partita: 7 };
+    var ordine = { ok: 0, conferma: 0, rischio: 1, probabile: 2, avvicina: 2, prevista: 3, rada: 4, uscita: 5, nv: 6, partita: 7 };
     var senza = [];
     tutti.forEach(function(t){
       if(!soloOggi && !agibile(t)) return;
@@ -2071,6 +2079,7 @@ window.avviaApp = function(){
          '<div><span class="stato-n ok">In tempo</span>l\'AIS la vede ferma in banchina e ci resta fino all\'orario della visita</div>' +
          '<div><span class="stato-n conferma">Da confermare</span>i dati non si aggiornano da oltre 45 minuti: era ferma in banchina all\'ultimo aggiornamento, ma potrebbe essere partita</div>' +
          '<div><span class="stato-n rischio">A rischio</span>ferma in banchina, ma parte vicino all\'orario della visita o l\'orario non è preciso</div>' +
+         '<div><span class="stato-n probabile">Probabilmente in banchina</span>l\'AIS l\'ha vista entrare in manovra vicino alla sua banchina e poi non l\'ha più sentita: quasi certamente è attraccata (controlla su VesselFinder; non è sulla mappa né nel conteggio)</div>' +
          '<div><span class="stato-n avvicina">In avvicinamento</span>l\'AIS la vede arrivare: non è ancora in banchina, non è sulla mappa né nel conteggio</div>' +
          '<div><span class="stato-n prevista">Non ancora in banchina</span>la dà il giornale ma l\'AIS non la vede ferma in banchina (non è sulla mappa né nel conteggio)</div>' +
          '<div><span class="stato-n prevista">Segnale perso</span>era ferma in banchina, ma da almeno 45 minuti (3 giri, di più se di solito si sente male) l\'AIS sente le altre navi e non lei: potrebbe essere partita (non è sulla mappa né nel conteggio)</div>' +
@@ -2126,6 +2135,7 @@ window.avviaApp = function(){
     var t = "Posizione AIS delle " + String(a.quando || "").replace(".", ":") + ": ";
     if(a.ormeggiata) return t + (a.silenzio ? "ferma in banchina, poi più nessun segnale." : "ferma in banchina.");
     if(a.in_uscita) return t + "in movimento: sta lasciando la banchina.";
+    if(a.attracco_probabile) return t + "in manovra vicino a " + a.banchina_probabile + ", poi più nessun segnale.";
     if(a.manovra) return t + "in manovra dentro il porto.";
     if(a.ancora) return t + "ferma in rada, a " + a.dist_nm + " miglia.";
     var e = a.eta_iso ? minutiDaIso(a.eta_iso) : null;

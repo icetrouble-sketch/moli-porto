@@ -1138,5 +1138,69 @@ class MemoriaERiepilogo(unittest.TestCase):
         self.assertEqual(A.testo_riepilogo(corto), "\n".join(corto))    # se c'e' spazio non si toglie niente
 
 
+class DragheEAttracchi(unittest.TestCase):
+    """29/10: PALMIRO Z (draga, si dichiara cargo da 68 m) entrava come nave da visitare ai Rinfuse; ULYSSE, entrata in
+    manovra a 1,9 nodi alle 9:01 e poi mai piu' sentita da aisstream (ormeggiata secondo VesselFinder), restava
+    'Non ancora in banchina'."""
+    T = quando("2026-10-29", "10:00")
+    MMSI = "247000010"
+
+    def test_la_draga_di_mele_non_entra_e_se_c_e_si_toglie(self):
+        d = {"navi": [], "escluse": [], "statici": {"247388500": {"imo": "8334964", "nome": "PALMIRO Z", "tipo": 70, "lung": 68}},
+             "registro": {"247388500": posizione(self.T, 5)}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T, {"247388500"}, True)
+        self.assertEqual(d["navi"], [])
+        d["navi"] = [{"nome": "PALMIRO Z", "imo": "", "mmsi": "247388500", "tipo": "CARGO", "fonti": ["ais"], "dove": {"terminal": "rinfuse"}}]
+        A.escludi_non_visitabili(d, self.T)
+        self.assertEqual(d["navi"], [])
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.T, True)
+        self.assertEqual(d["non_visitare"], [])                          # non si mostra neanche in grigio
+
+    def test_i_mezzi_della_diga_del_giornale_non_entrano_dall_ais(self):
+        righe = [riga("ANNAMARIA Z", "8666939", "DRAGA", "ARRIVI", "08.00", zona="MEZZI DIGA"),
+                 riga("NORMALE", "9074729", "CONT.", "ARRIVI", "08.00")]
+        navi, escluse = A.navi_dal_giornale(righe, "2026-10-29")
+        self.assertEqual([n["nome"] for n in navi], ["NORMALE"])
+        d = {"navi": [], "escluse": [], "statici": {self.MMSI: {"imo": "8666939", "nome": "ANNAMARIA Z", "tipo": 70, "lung": 120}},
+             "registro": {self.MMSI: posizione(self.T, 5)}}
+        for e in escluse:
+            A.registra_esclusa(d, e, e["motivo"], self.T)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T, {self.MMSI}, True)
+        self.assertEqual(d["navi"], [])
+        A.costruisci_non_visitare(d, BANCHINE_PROVA, self.T, True)
+        self.assertEqual(d["non_visitare"], [])
+
+    def nave(self):
+        return {"nome": "ULYSSE", "imo": "9142459", "mmsi": self.MMSI, "tipo": "RO/RO", "fonti": ["giornale"], "giorno": "2026-10-29",
+                "arrivo": "08.00", "arrivo_giorno": "2026-10-29", "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente"}}
+
+    def dati(self, minuti_fa, lon=8.8985, sog=1.9):
+        return {"navi": [self.nave()], "escluse": [],
+                "statici": {self.MMSI: {"imo": "9142459", "nome": "ULYSSE", "tipo": 70, "lung": 162}},
+                "registro": {self.MMSI: posizione(self.T, minuti_fa, lon=lon, sog=sog, cog=0)}}
+
+    def test_lenta_dentro_il_porto_e_in_manovra(self):
+        d = self.dati(2)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        a = d["navi"][0]["ais"]
+        self.assertTrue(a["manovra"])
+        self.assertNotIn("attracco_probabile", a)                        # segnale fresco: sta ancora manovrando
+
+    def test_in_manovra_vicino_alla_sua_banchina_poi_silenzio_e_attracco_probabile(self):
+        d = self.dati(60)
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        a = d["navi"][0]["ais"]
+        self.assertTrue(a["attracco_probabile"])
+        self.assertEqual(a["banchina_probabile"], "MOLO ponente")
+        d = self.dati(4 * 60)                                            # vale come una nave ferma: 6 ore
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        self.assertTrue(d["navi"][0]["ais"]["attracco_probabile"])
+
+    def test_lontana_dalla_sua_banchina_niente_attracco_probabile(self):
+        d = self.dati(60, lon=8.9150)                                    # circa 1,2 km a est
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.T)
+        self.assertNotIn("attracco_probabile", d["navi"][0]["ais"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
