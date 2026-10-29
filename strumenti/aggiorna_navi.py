@@ -58,13 +58,49 @@ def log(*a):
     RIEPILOGO.append(riga)
 
 
+# GitHub taglia ogni annotazione a 4096 caratteri: oltre, si perdeva la fine del riepilogo (elenco delle navi,
+# diagnosi). Se il riepilogo e' troppo lungo si tolgono prima le righe meno importanti.
+LIMITE_ANNOTAZIONE = 4000
+RIGHE_SACRIFICABILI = ("taratura:", "tipo non riconosciuto:", "orario non letto:", "orario fuori ordine:", "bulk nel giornale:",
+                       "conferma dal sito:", "pagina p-", "zone del giornale:", "note sul sito:", "giornali gia' letti:",
+                       "tentativo ")
+# Righe che segnalano un problema: il riepilogo diventa un avviso (warning). GitHub tiene 10 annotazioni per tipo:
+# cosi' i giri con problemi non si perdono dietro ai giri normali.
+RIGHE_PROBLEMA = ("ERRORE", "ATTENZIONE", "non riuscito", "non raggiungibile", "non scaricato", "non letto, si riprova",
+                  "sparita dall'AIS", "abbinamento AIS sbagliato", "diagnosi, ferma nei moli")
+
+
+def testo_riepilogo(righe, limite=LIMITE_ANNOTAZIONE):
+    righe = list(righe)
+    def lungo(r):
+        return len("\n".join(r))
+    tolte = 0
+    for chiave in RIGHE_SACRIFICABILI:
+        if lungo(righe) <= limite:
+            break
+        prima = len(righe)
+        righe = [r for r in righe if chiave not in r[:40]]
+        tolte += prima - len(righe)
+    if lungo(righe) > limite:
+        righe = [r if len(r) <= 220 else r[:217] + "..." for r in righe]
+    nota = "(%d righe meno importanti tolte: sono nel log del lavoro)" % tolte if tolte else ""
+    testo = "\n".join(righe + ([nota] if nota else []))
+    if len(testo) > limite:
+        testo = "...\n" + testo[-(limite - 4):]                 # si tiene la fine: elenco delle navi e conteggi
+    return testo
+
+
 def riepilogo_actions():
     """In GitHub Actions il riepilogo del giro diventa un'annotazione leggibile anche
     senza scaricare i log (utile per controllare da fuori che il giro sia andato bene)."""
-    if os.environ.get("GITHUB_ACTIONS") and RIEPILOGO:
-        testo = "\n".join(RIEPILOGO)[-30000:]
-        testo = testo.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print("::notice title=Riepilogo del giro::" + testo, flush=True)
+    try:
+        if os.environ.get("GITHUB_ACTIONS") and RIEPILOGO:
+            problema = any(k in r for r in RIEPILOGO for k in RIGHE_PROBLEMA)
+            testo = testo_riepilogo(RIEPILOGO)
+            testo = testo.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print("::%s title=Riepilogo del giro::%s" % ("warning" if problema else "notice", testo), flush=True)
+    except Exception as e:
+        print("riepilogo non scritto:", type(e).__name__, e, flush=True)
 
 
 # ---------------------------------------------------------------- cifratura
@@ -830,6 +866,14 @@ def aggiorna_registro(dati, pos, statici, adesso):
     if spente:
         for mmsi in [m for m in spente if m not in reg]:
             spente.pop(mmsi, None)
+    # I dati delle navi (nome, IMO, tipo, misure) di tutto il Mar Ligure non si cancellavano mai: la memoria cresceva
+    # a ogni giro. Si tengono solo per le navi sentite negli ultimi 3 giorni (quelle del registro) e per quelle che
+    # servono (in elenco, da non visitare, escluse, seguite). Se una nave torna, l'AIS li ritrasmette ogni 6 minuti.
+    servono = set(reg) | set(SEGUITE)
+    for chiave_l in ("navi", "non_visitare", "escluse"):
+        servono |= {x.get("mmsi") for x in dati.get(chiave_l) or [] if x.get("mmsi")}
+    for mmsi in [m for m in sta if m not in servono]:
+        sta.pop(mmsi, None)
 
 
 VERSIONE_REGOLA_ASSENZA = 2

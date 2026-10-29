@@ -1110,5 +1110,33 @@ class DatiPerIlTelefono(unittest.TestCase):
             self.assertFalse(os.path.exists(stato + ".nuovo"))
 
 
+class MemoriaERiepilogo(unittest.TestCase):
+    """29/10: i dati delle navi dell'AIS non si cancellavano mai; il riepilogo oltre i 4096 caratteri perdeva la fine."""
+
+    def test_i_dati_delle_navi_non_sentite_da_3_giorni_si_tolgono(self):
+        from datetime import timedelta
+        t = quando("2026-10-29", "07:00")
+        d = {"registro": {"1": posizione(t, 60), "2": posizione(t, 4 * 24 * 60)},
+             "statici": {"1": {"nome": "A"}, "2": {"nome": "B"}, "3": {"nome": "C"}, "4": {"nome": "D"}, "5": {"nome": "E"}},
+             "navi": [{"nome": "D", "mmsi": "4"}], "escluse": [{"nome": "E", "mmsi": "5"}]}
+        A.aggiorna_registro(d, {}, {"6": {"nome": "F"}}, t)
+        self.assertEqual(sorted(d["registro"]), ["1"])
+        self.assertEqual(sorted(d["statici"]), ["1", "4", "5"])          # 2 e 3 non si sentono da 3 giorni, 6 senza posizione
+
+    def test_il_riepilogo_sta_nei_4096_caratteri_e_tiene_la_fine(self):
+        righe = ["07:00:00 note sul sito: x"] + ["07:00:01 taratura: POSTO%d -> ALTRO x1" % i for i in range(60)] + \
+                ["07:00:02 diagnosi, ferma nei moli: " + "N" * 300] + ["07:10:00 in elenco: NAVE %d | CONT." % i for i in range(40)] + \
+                ["07:10:01 scritto navi.enc.json navi: 40"]
+        t = A.testo_riepilogo(righe)
+        self.assertLessEqual(len(t), 4096)
+        self.assertIn("scritto navi.enc.json navi: 40", t)
+        self.assertIn("in elenco: NAVE 0 |", t)
+        self.assertIn("diagnosi, ferma nei moli", t)
+        self.assertNotIn("taratura:", t)
+        self.assertIn("righe meno importanti tolte", t)
+        corto = ["07:00:00 taratura: A -> B x1", "07:10:00 in elenco: NAVE | CONT."]
+        self.assertEqual(A.testo_riepilogo(corto), "\n".join(corto))    # se c'e' spazio non si toglie niente
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
