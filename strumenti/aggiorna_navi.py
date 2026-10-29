@@ -30,6 +30,8 @@ VALIDITA_POSIZIONE = timedelta(hours=3)     # quanto vale l'ultima posizione di 
 VALIDITA_FERMA = timedelta(hours=6)         # ... e di una nave ferma alla banchina
 DISTANZA_ATTRACCO = 400                     # metri: in manovra cosi' vicino a una banchina del suo terminal = sta attraccando
 ATTESA_ATTRACCO = timedelta(minutes=20)     # dopo quanto senza segnale si dice "probabilmente in banchina"
+SENZA_AIS_FORSE = timedelta(hours=12)       # nave del giornale mai vista in banchina e AIS muto: "forse gia' partita"
+SENZA_AIS_VIA = timedelta(hours=24)         # ... e dopo cosi' si toglie
 DISTANZA_ENTRATA = 1.5                      # miglia dall'imboccatura: diretta in porto cosi' vicino = sta entrando
 # Regola dell'assenza. Una nave ferma trasmette ogni 3 minuti: se l'AIS sente le altre navi dei moli ma non lei
 # per due giri di fila (con buona ricezione, vedi qualita_ricezione), non e' piu' li' (o non la sentiamo piu'):
@@ -244,7 +246,15 @@ def pulisci_nome(n):
     return " ".join(parole).strip(" .-")
 
 
+def e_motonave(t):
+    """MV., M.V., M/V (Motor Vessel), MN, M/N, M.N. (motonave): nel giornale e' una sigla generica, non un tipo.
+    (Mele, 29/10.) "MM." e' la stessa sigla letta male (GOYNUK: "MV." un giorno, "MM." un altro)."""
+    return re.sub(r"[^A-Z]", "", (t or "").upper()) in ("MV", "MN", "MM")
+
+
 def pulisci_tipo(t):
+    if e_motonave(t):
+        return "M/N"
     t = re.sub(r"[^A-Z/.]", "", (t or "").upper())
     if not t:
         return ""
@@ -1547,6 +1557,23 @@ def pulizia(dati, adesso):
             if not visto and dal and (adesso.astimezone(ROMA).date() - datetime.fromisoformat(dal).date()).days > 3:
                 log("in memoria da troppi giorni senza conferme:", n["nome"]); continue
             n["da_confermare"] = not visto
+        # Mai vista ferma in banchina e l'AIS non la sente da molte ore (in nessun punto del Mar Ligure) anche se doveva
+        # essere gia' arrivata: non e' qui (ECO BARCELONA, 29/10: in memoria da martedi', era a Malta). Dopo 12 ore
+        # "forse gia' partita", dopo 24 si toglie. Una nave in banchina che l'AIS non sente cosi' a lungo e' molto rara.
+        n.pop("forse_partita", None)
+        if not visto and "giornale" in fonti:
+            arr = istante(n.get("arrivo_giorno") or n.get("giorno"), n.get("arrivo")) if n.get("arrivo") else (
+                datetime.fromisoformat(n["in_porto_dal"]).replace(tzinfo=ROMA) if n.get("in_porto_dal") else None)
+            ult = (dati.get("registro") or {}).get(n.get("mmsi") or "", {}).get("quando")
+            ult = datetime.fromisoformat(ult) if ult else None
+            if arr is not None and adesso - arr >= SENZA_AIS_FORSE:
+                da = adesso - max(arr, ult) if ult else adesso - arr
+                if da >= SENZA_AIS_VIA:
+                    log("tolta: doveva essere in porto, ma l'AIS non l'ha mai vista in banchina e non la sente da %d ore:" % (da.total_seconds() // 3600), n["nome"])
+                    continue
+                if da >= SENZA_AIS_FORSE:
+                    n["forse_partita"] = True
+                    log("forse gia' partita (mai vista in banchina, AIS muto da %d ore):" % (da.total_seconds() // 3600), n["nome"])
         if silenzio:
             n["segnale_perso"] = True                     # sul giornale, ma l'AIS non la sente piu': da confermare
         else:
@@ -1752,7 +1779,7 @@ def main():
         diagnostica_moli(dati, banchine, adesso, sentite, ricezione_ok)
     for n in sorted(dati.get("navi", []), key=lambda x: x.get("nome") or ""):
         dubbi = []
-        if n.get("tipo") not in TIPI_VISITABILI:
+        if n.get("tipo") not in TIPI_VISITABILI and not (n.get("tipo") == "M/N" and (dati.get("statici") or {}).get(n.get("mmsi") or "")):
             dubbi.append("tipo del giornale '%s'" % (n.get("tipo") or "illeggibile"))
         if not imo_valido(n.get("imo")):
             dubbi.append("IMO non letto")

@@ -1240,5 +1240,54 @@ class EntrataProbabile(unittest.TestCase):
         self.assertTrue(a["manovra"] and a["entrata_probabile"])
 
 
+class MotonaviEMaiViste(unittest.TestCase):
+    """29/10, Mele: MV./M.V. = Motor Vessel, MN = motonave (sigla generica). ECO BARCELONA restava in elenco da martedi'
+    senza che l'AIS l'avesse mai vista: era a Malta."""
+
+    def test_sigle_motonave(self):
+        for t in ("MV.", "M.V..", "M/V", "MN", "M/N", "M.N.", "MM."):
+            self.assertEqual(A.pulisci_tipo(t), "M/N", t)
+        self.assertEqual(A.pulisci_tipo("CONT."), "CONT.")
+        self.assertFalse(A.e_mezzo_di_servizio("MV."))
+        navi, _ = A.navi_dal_giornale([riga("CERULEAN", "9074729", "MV.", "ARRIVI", "13.30")], "2026-10-29")
+        self.assertEqual(navi[0]["tipo"], "M/N")
+        n = dict(navi[0], mmsi="1", fonti=["giornale"])
+        self.assertTrue(A.motivo_esclusione(n, {"statici": {"1": {"tipo": 84}}}).startswith("cisterna"))   # l'AIS decide
+        self.assertIsNone(A.motivo_esclusione(n, {"statici": {"1": {"tipo": 70}}}))
+
+    def nave(self, **extra):
+        n = {"nome": "ECO BARCELONA", "imo": "9074729", "mmsi": "5", "tipo": "RO/RO", "fonti": ["giornale", "memoria"],
+             "giorno": "2026-10-28", "in_porto_dal": "2026-10-28", "dove": {"terminal": "sangiorgio"}}
+        n.update(extra)
+        return n
+
+    def test_mai_vista_e_muta_forse_partita_poi_tolta(self):
+        d = {"navi": [self.nave()], "registro": {}}
+        A.pulizia(d, quando("2026-10-28", "10:00"))
+        self.assertNotIn("forse_partita", d["navi"][0])                  # 10 ore dall'inizio del giorno
+        A.pulizia(d, quando("2026-10-28", "13:00"))
+        self.assertTrue(d["navi"][0]["forse_partita"])
+        A.pulizia(d, quando("2026-10-29", "01:00"))
+        self.assertEqual(d["navi"], [])
+
+    def test_se_l_ais_la_sente_o_e_stata_in_banchina_resta(self):
+        t = quando("2026-10-29", "14:00")
+        d = {"navi": [self.nave()], "registro": {"5": posizione(t, 60, lat=44.30, sog=10, cog=0)}}
+        A.pulizia(d, t)
+        self.assertEqual(len(d["navi"]), 1)
+        self.assertNotIn("forse_partita", d["navi"][0])                  # sentita un'ora fa in mare: arriva
+        d = {"navi": [self.nave(visto_banchina=quando("2026-10-29", "08:00").isoformat())], "registro": {}}
+        A.pulizia(d, t)
+        self.assertEqual(len(d["navi"]), 1)
+
+    def test_in_arrivo_domani_non_si_tocca(self):
+        n = self.nave(nome="LIBERTAS-H", fonti=["giornale"], giorno="2026-10-30", arrivo="04.00", arrivo_giorno="2026-10-30")
+        n.pop("in_porto_dal")
+        d = {"navi": [n], "registro": {}}
+        A.pulizia(d, quando("2026-10-29", "14:00"))
+        self.assertEqual(len(d["navi"]), 1)
+        self.assertNotIn("forse_partita", d["navi"][0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
