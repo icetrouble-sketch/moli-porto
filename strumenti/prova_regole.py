@@ -319,18 +319,19 @@ class RegolaDellAssenza(unittest.TestCase):
         A.pulizia(d, adesso)
         return adesso
 
-    def test_nave_del_giornale_dopo_tre_assenze_diventa_segnale_perso_ma_resta(self):
+    def test_nave_del_giornale_dopo_n_assenze_diventa_segnale_perso_ma_resta(self):
         d = self.dati([self.nave()])
-        for minuti, assenze in ((15, 1), (30, 2)):
-            self.giro(d, minuti)
+        N = A.ASSENZE_MIN
+        for k in range(1, N):
+            self.giro(d, 15 * k)
             n = d["navi"][0]
-            self.assertEqual(n["assenze_ais"], assenze)
+            self.assertEqual(n["assenze_ais"], k)
             self.assertTrue(n["ais"]["ormeggiata"])
-            self.assertNotIn("silenzio", n["ais"])                      # uno o due giri: ancora 'in tempo'
+            self.assertNotIn("silenzio", n["ais"])                      # meno di N giri: ancora 'in tempo'
             self.assertNotIn("segnale_perso", n)
-        self.giro(d, 45)
+        self.giro(d, 15 * N)
         n = d["navi"][0]
-        self.assertEqual(n["assenze_ais"], 3)
+        self.assertEqual(n["assenze_ais"], N)
         self.assertTrue(n["ais"]["silenzio"])
         self.assertTrue(n["segnale_perso"])                             # dal giornale: resta, da confermare
 
@@ -345,24 +346,25 @@ class RegolaDellAssenza(unittest.TestCase):
         self.assertEqual(d["navi"][0]["assenze_ais"], 0)
 
     def test_le_navi_sentite_male_aspettano_di_piu(self):
-        self.assertEqual(A.assenze_necessarie({}), 3)                           # niente storia: 3 giri
-        self.assertEqual(A.assenze_necessarie({"ascolto": [20, 20]}), 3)          # sentita sempre
-        self.assertEqual(A.assenze_necessarie({"ascolto": [6, 10]}), 4)           # 6 volte su 10
-        self.assertEqual(A.assenze_necessarie({"ascolto": [5, 10]}), 5)           # una volta su due
-        self.assertEqual(A.assenze_necessarie({"ascolto": [2, 20]}), 8)           # quasi mai: al massimo 8
+        self.assertEqual(A.assenze_necessarie({}), 5)                           # niente storia: 5 giri
+        self.assertEqual(A.assenze_necessarie({"ascolto": [20, 20]}), 5)          # sentita sempre
+        self.assertEqual(A.assenze_necessarie({"ascolto": [6, 10]}), 6)           # 6 volte su 10
+        self.assertEqual(A.assenze_necessarie({"ascolto": [5, 10]}), 7)           # una volta su due
+        self.assertEqual(A.assenze_necessarie({"ascolto": [2, 20]}), 10)          # quasi mai: al massimo 10
         d = self.dati([self.nave(ascolto=[5, 10])])
-        for minuti in (15, 30, 45, 60):
-            self.giro(d, minuti)
-        self.assertNotIn("segnale_perso", d["navi"][0])                       # 4 giri: per lei non bastano
-        self.giro(d, 75)
+        for k in range(1, 7):
+            self.giro(d, 15 * k)
+        self.assertNotIn("segnale_perso", d["navi"][0])                       # 6 giri: per lei non bastano
+        self.giro(d, 105)
         self.assertTrue(d["navi"][0]["segnale_perso"])
 
     def test_se_la_nave_si_risente_il_conto_riparte(self):
         d = self.dati([self.nave()])
-        self.giro(d, 15); self.giro(d, 30); self.giro(d, 45)
+        for k in range(1, A.ASSENZE_MIN + 1):
+            self.giro(d, 15 * k)
         self.assertTrue(d["navi"][0]["segnale_perso"])
-        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-60)    # segnale nuovo
-        self.giro(d, 60, sentite=(self.MMSI,))
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-150)   # segnale nuovo
+        self.giro(d, 150, sentite=(self.MMSI,))
         n = d["navi"][0]
         self.assertEqual(n["assenze_ais"], 0)
         self.assertNotIn("silenzio", n["ais"])
@@ -395,23 +397,25 @@ class RegolaDellAssenza(unittest.TestCase):
         self.giro(d, 15)
         self.assertEqual(d["navi"][0].get("assenze_ais", 0), 0)
 
-    def test_nave_solo_ais_dopo_tre_assenze_esce_e_non_rientra_dal_registro(self):
+    def test_nave_solo_ais_dopo_n_assenze_esce_e_non_rientra_dal_registro(self):
         d = self.dati([self.nave(fonti=["ais"])])
-        self.giro(d, 15); self.giro(d, 30)
+        N = A.ASSENZE_MIN
+        for k in range(1, N):
+            self.giro(d, 15 * k)
         self.assertEqual(len(d["navi"]), 1)
-        self.giro(d, 45)
+        self.giro(d, 15 * N)
         self.assertEqual(d["navi"], [])                                  # sparita
         self.assertIn(self.MMSI, d["spente"])
-        self.giro(d, 60)                                                 # il registro ha ancora la vecchia posizione
+        self.giro(d, 15 * N + 15)                                        # il registro ha ancora la vecchia posizione
         self.assertEqual(d["navi"], [])
-        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-75)     # ma se ricompare un segnale nuovo...
-        self.giro(d, 75, sentite=(self.MMSI,))
+        d["registro"][self.MMSI] = posizione(self.t0, minuti_fa=-(15 * N + 30))   # ma se ricompare un segnale nuovo...
+        self.giro(d, 15 * N + 30, sentite=(self.MMSI,))
         self.assertEqual([n["nome"] for n in d["navi"]], ["SIGMA"])      # ...rientra
 
     def test_nave_del_giornale_con_partenza_passata_e_silenzio_si_toglie_invece_di_ritardo(self):
         from datetime import timedelta
         adesso = self.t0 + timedelta(hours=1)
-        for assenze, atteso in ((0, ["SIGMA"]), (3, [])):
+        for assenze, atteso in ((0, ["SIGMA"]), (A.ASSENZE_MIN, [])):
             n = self.nave(partenza="09.00", assenze_ais=assenze, visto_banchina=(adesso - timedelta(minutes=10)).isoformat(),
                           ais={"ormeggiata": True})
             d = {"navi": [n]}
@@ -566,7 +570,7 @@ class GiriDellaNotte(unittest.TestCase):
             reg[str(300 + i)] = posizione(self.t0, 0)                                  # tre delle altre cinque si sentono adesso
         self.assertEqual(A.qualita_ricezione(d, sentite, self.t0, f), (True, 10, 8))
 
-    def test_tre_giri_di_notte_di_assenza_fanno_segnale_perso(self):
+    def test_n_giri_di_assenza_dalla_notte_fanno_segnale_perso(self):
         from datetime import timedelta
         n = {"nome": "SIGMA", "imo": "", "mmsi": self.MMSI, "tipo": "CONT.", "fonti": ["giornale"], "giorno": "2026-10-27",
              "visto_banchina": (self.t0 - timedelta(hours=4)).isoformat(),
@@ -582,11 +586,12 @@ class GiriDellaNotte(unittest.TestCase):
         A.pulizia(d, t6)
         self.assertEqual(d["navi"][0]["assenze_ais"], 2)
         self.assertNotIn("segnale_perso", d["navi"][0])
-        t7 = self.t0 + timedelta(hours=4)
-        A.aggiorna_presenze(d, BANCHINE_PROVA, t7, {"999"}, True)                       # giro delle 7
-        A.pulizia(d, t7)
-        self.assertEqual(d["navi"][0]["assenze_ais"], 3)
-        self.assertTrue(d["navi"][0]["segnale_perso"])
+        for k in range(3, A.ASSENZE_MIN + 1):                                           # giri delle 7, 7:15, 7:30
+            tk = self.t0 + timedelta(hours=4, minutes=15 * (k - 3))
+            A.aggiorna_presenze(d, BANCHINE_PROVA, tk, {"999"}, True)
+            A.pulizia(d, tk)
+            self.assertEqual(d["navi"][0].get("segnale_perso", False), k == A.ASSENZE_MIN, k)
+        self.assertEqual(d["navi"][0]["assenze_ais"], A.ASSENZE_MIN)
 
     def test_ascolto_piu_lungo_di_notte(self):
         from datetime import datetime
@@ -1291,10 +1296,10 @@ class MotonaviEMaiViste(unittest.TestCase):
 
 class CorrezioniSera29(unittest.TestCase):
     def test_terminal_sentito_male_aspetta_di_piu(self):
-        self.assertEqual(A.assenze_necessarie({}), 3)
-        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.5}), 6)          # MSC EDITH II a Bettolo
-        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.3}), 8)          # al massimo 8 (2 ore)
-        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.5, "ascolto": [30, 30]}), 3)   # lei si sente sempre
+        self.assertEqual(A.assenze_necessarie({}), 5)
+        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.5}), 8)          # MSC EDITH II a Bettolo
+        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.3}), 10)         # al massimo 10 (2 ore e mezza)
+        self.assertEqual(A.assenze_necessarie({"p_terminal": 0.5, "ascolto": [30, 30]}), 5)   # lei si sente sempre
 
     def test_la_statistica_del_terminal_si_aggiorna(self):
         t = quando("2026-10-29", "15:00")

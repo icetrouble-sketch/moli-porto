@@ -40,9 +40,9 @@ SEGNALE_RECENTE = timedelta(minutes=40)     # una nave solo-AIS entra nell'elenc
 # Giri di fila senza sentirla (con buona ricezione) prima di 'segnale perso': almeno 3 (45 minuti di giorno), fino a 6 per
 # le navi che l'AIS di solito sente male (vedi assenze_necessarie). Con 2 (fino al 28/10 sera) il 28/10 tra le 14:33 e le 16:58
 # GOYNUK, CHENNAI EXPRESS ed ELISABETH RUSS erano passate a 'segnale perso' pur essendo in banchina (risentite al giro dopo).
-ASSENZE_MIN = 3
-ASSENZE_TETTO = 8                           # al massimo 2 ore di giorno (29/10: MSC EDITH II a Bettolo, 4 giri senza segnale e c'era)
-ERRORE_AMMESSO = 0.02                       # probabilita' accettata di dire 'segnale perso' a una nave che c'e'
+ASSENZE_MIN = 5                             # 30/10: con 3 giri, 3 falsi 'segnale perso' in un giorno (JOLLY GIADA, LIBERTAS H, MSC MANZANILLO V)
+ASSENZE_TETTO = 10                          # al massimo 2 ore e mezza di giorno (29/10: MSC EDITH II a Bettolo, 4 giri senza segnale e c'era)
+ERRORE_AMMESSO = 0.005                       # probabilita' accettata di dire 'segnale perso' a una nave che c'e'
 ASSENZE_MAX = ASSENZE_MIN                   # (nome di prima)
 RICEZIONE_MIN = 5                           # navi ferme nei moli (ultime 2 ore) necessarie per giudicare la ricezione
 RICEZIONE_QUOTA = 0.6                       # quota di quelle sentita in questo giro per dire che la ricezione e' buona
@@ -1390,7 +1390,7 @@ def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         if s and (s.get("lung") or 0) < 100 and not rinfuse_piccola:
             continue                                  # rimorchiatori e barche: non interessano
         vicina = vicine[0]["d"] if vicine else 9999
-        if vicina > 400 or (not s and vicina > 150):
+        if vicina > 200 or (not s and vicina > 150):
             continue                                  # lontana da ogni banchina (all'ancora, in transito): non e' un caso da spiegare
         righe.append(descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite))
     for r in sorted(righe)[:30]:
