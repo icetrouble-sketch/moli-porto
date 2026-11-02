@@ -76,12 +76,14 @@
      Una nave arancione entra in porto, si ferma in banchina e diventa i tasti (1,5 secondi).
      Riquadro azzurro pastello, tasto Entra arancione, tasto Face ID verdino. */
   #pin{gap:14px}
-  .pin-scena{position:relative;width:300px;height:150px;flex:none}
+  .pin-scena{position:relative;width:300px;height:150px;flex:none;overflow:hidden;border-radius:26px}
+  .pin-cornice{position:absolute;inset:0;width:300px;height:150px;pointer-events:none}
   .pin-scena > svg{display:block;width:300px;height:150px}
-  #pinNave{position:absolute;left:0;top:0;width:92px;height:52px;transform:translate(148px,36px);will-change:transform}
+  #pinNave{position:absolute;left:0;top:0;width:92px;height:52px;transform:translate(112px,36px);will-change:transform}
   #pinNave svg{display:block;width:92px;height:52px;overflow:visible}
-  #pinNave .fumo{transform-box:fill-box;transform-origin:center;animation:fumo .7s ease-out infinite}
-  @keyframes fumo{0%{transform:translate(-3px,6px) scale(.6);opacity:0}30%{opacity:1}100%{transform:translate(6px,-6px) scale(1.15);opacity:0}}
+  #pinNave .fumo{transform-box:fill-box;transform-origin:center;animation:fumo 1s ease-out infinite;opacity:0}
+  #pinNave .f2{animation-delay:.25s} #pinNave .f3{animation-delay:.5s} #pinNave .f4{animation-delay:.75s}
+  @keyframes fumo{0%{transform:translate(0,6px) scale(.4);opacity:0}20%{opacity:1}100%{transform:translate(-16px,-26px) scale(1.9);opacity:0}}
   @media (prefers-reduced-motion: reduce){ #pinNave .fumo{animation:none} }
   @media (max-width:340px){ .pin-scena{transform:scale(.9);margin:-8px 0} }
   #pinCard{width:min(320px, 100%);background:var(--azzurro);border:2.6px solid var(--inchiostro);border-radius:24px;
@@ -390,8 +392,8 @@
       <defs><clipPath id="pinCornice"><rect x="2" y="2" width="296" height="146" rx="26"/></clipPath></defs>
       <g clip-path="url(#pinCornice)" stroke="#2A241F" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
         <rect x="0" y="0" width="300" height="70" fill="#FDF1D6" stroke="none"/>
-        <circle cx="136" cy="24" r="12" fill="#F9D27A"/><path d="M136 4 v4 M136 40 v4 M116 24 h4 M152 24 h4 M122 10 l3 3 M147 35 l3 3 M150 10 l-3 3 M125 35 l-3 3" stroke-width="2.2"/>
-        <path d="M168 34 q4 -10 14 -7 q5 -8 14 -2 q9 -1 9 7 q0 6 -8 6 h-24 q-8 0 -5 -4z" fill="#FFFFFF"/>
+        <circle cx="100" cy="20" r="10" fill="#F9D27A"/><path d="M100 3 v4 M100 33 v3 M83 20 h4 M113 20 h4 M88 8 l3 3 M109 29 l3 3 M112 8 l-3 3 M91 29 l-3 3" stroke-width="2.2"/>
+        
         <path d="M40 22 q3 -7 10 -5 q4 -6 11 -1 q7 0 6 6 q-1 4 -6 4 h-17 q-6 0 -4 -4z" fill="#FFFFFF"/>
         <rect x="-4" y="56" width="308" height="16" fill="#F1E3C4"/>
         <rect x="24" y="36" width="28" height="20" rx="2" fill="#F6B9A0"/>
@@ -414,11 +416,10 @@
         <rect x="120" y="96" width="16" height="9" rx="2" fill="#F9D27A"/>
         <path d="M118 96 L128 88 L138 96z" fill="#F2A07F"/>
       </g>
-      <rect x="2" y="2" width="296" height="146" rx="26" fill="none" stroke="#2A241F" stroke-width="3.2"/>
     </svg>
     <div id="pinNave">
       <svg viewBox="0 0 92 52" stroke="#2A241F" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
-        <g class="fumo" fill="#FFFFFF" stroke-width="2"><circle cx="66" cy="8" r="4.5"/><circle cx="74" cy="4" r="3.2"/></g>
+        <g fill="#FFFFFF" stroke-width="2"><circle class="fumo f1" cx="65" cy="9" r="5"/><circle class="fumo f2" cx="65" cy="9" r="5"/><circle class="fumo f3" cx="65" cy="9" r="5"/><circle class="fumo f4" cx="65" cy="9" r="5"/></g>
         <path d="M60 28 V14 H70 V28" fill="var(--arancio-scuro)"/>
         <path d="M60 18 H70" stroke-width="2" stroke="#FDFDF1"/>
         <path d="M36 28 V18 Q36 16 38 16 H58 Q60 16 60 18 V28z" fill="#FDFDF1"/>
@@ -429,6 +430,7 @@
         <rect x="22" y="20" width="10" height="6" rx="1" fill="#BFD7EA" stroke-width="2"/>
       </svg>
     </div>
+    <svg class="pin-cornice" viewBox="0 0 300 150"><rect x="2" y="2" width="296" height="146" rx="26" fill="none" stroke="#2A241F" stroke-width="3.2"/></svg>
   </div>
   <h1>Moli del porto</h1>
   <p id="pinTesto">Inserisci il codice per aprire la mappa.</p>
@@ -729,7 +731,8 @@
 
   mostraFace();
 
-  /* Ingresso animato (1,5 s): la nave entra in porto (0,9 s) e diventa i tasti visibili (0,55 s).
+  /* Ingresso animato (2,5 s): la nave entra dal lato sinistro del disegno e si ferma in banchina (1,3 s),
+     fa un po' di fumo (0,65 s) e diventa i tasti visibili (0,55 s).
      Un tocco la fa finire subito; con "Riduci movimento" non c'e'. */
   var naveEl = document.getElementById("pinNave");
   var animIngresso = [], saltaIngresso = false;
@@ -741,22 +744,28 @@
     animIngresso.forEach(function(a){ try{ a.cancel(); }catch(e){} });
     animIngresso = [];
     Array.prototype.forEach.call(document.querySelectorAll(".pin-morph"), function(x){ x.remove(); });
-    var fermo = "translate(148px,36px)";
+    var fermo = "translate(112px,36px)";
     var ridotto = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
     if(!naveEl.animate || ridotto){ elPin.classList.remove("intro"); naveEl.style.opacity = ""; return; }
     elPin.classList.add("intro");
     naveEl.style.opacity = "";
     var viaggio = naveEl.animate([
-      { transform: "translate(-96px,92px) rotate(-6deg)", opacity: 0 },
-      { offset: .15, opacity: 1 },
-      { offset: .35, transform: "translate(-4px,88px) rotate(4deg)" },
-      { offset: .55, transform: "translate(60px,72px) rotate(-7deg)" },
-      { offset: .75, transform: "translate(118px,46px) rotate(3deg)" },
-      { offset: .9, transform: "translate(146px,38px) rotate(-2deg)" },
+      { transform: "translate(-96px,38px) rotate(0deg)" },
+      { offset: .25, transform: "translate(-14px,40px) rotate(-3deg)" },
+      { offset: .5, transform: "translate(44px,38px) rotate(2.5deg)" },
+      { offset: .75, transform: "translate(92px,39px) rotate(-2deg)" },
+      { offset: .9, transform: "translate(109px,36px) rotate(1deg)" },
       { transform: fermo }
-    ], { duration: 900, easing: "cubic-bezier(.25,.6,.35,1)", fill: "forwards" });
+    ], { duration: 1300, easing: "cubic-bezier(.3,.5,.4,1)", fill: "forwards" });
     animIngresso.push(viaggio);
+    // ferma in banchina fa un po' di fumo (0,65 s), poi diventa i tasti
     viaggio.finished.then(function(){
+      var sosta = naveEl.animate([{ transform: fermo }, { offset: .5, transform: "translate(112px,37px)" }, { transform: fermo }],
+                                 { duration: 650, easing: "ease-in-out" });
+      animIngresso.push(sosta);
+      if(saltaIngresso) sosta.finish();
+      return sosta.finished;
+    }).then(function(){
       // i tasti visibili: la nave "diventa" ciascuno di loro
       var bersagli = [btFace, btn].filter(function(b){ return !b.hidden && b.offsetParent !== null; });
       var r0 = naveEl.getBoundingClientRect();
