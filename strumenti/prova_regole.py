@@ -399,9 +399,11 @@ class RegolaDellAssenza(unittest.TestCase):
 
     def test_nave_solo_ais_dopo_n_assenze_esce_e_non_rientra_dal_registro(self):
         d = self.dati([self.nave(fonti=["ais"])])
-        N = A.ASSENZE_MIN
+        N = A.ASSENZE_MIN + A.ASSENZE_IN_PIU_PER_TOGLIERE
         for k in range(1, N):
             self.giro(d, 15 * k)
+            if k == A.ASSENZE_MIN:
+                self.assertTrue(d["navi"][0].get("segnale_perso"))    # prima "segnale perso", poi si toglie
         self.assertEqual(len(d["navi"]), 1)
         self.giro(d, 15 * N)
         self.assertEqual(d["navi"], [])                                  # sparita

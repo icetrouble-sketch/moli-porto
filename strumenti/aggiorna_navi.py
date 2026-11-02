@@ -966,6 +966,16 @@ def in_silenzio(n):
     return (n.get("assenze_ais") or 0) >= assenze_necessarie(n)
 
 
+# Per TOGLIERE una nave vista solo dall'AIS servono 2 giri in piu' (fino al tetto): prima resta in elenco come
+# "segnale perso". GRANDE SENEGAL (31/10, San Giorgio, sentita in 15 giri su 27) e' stata tolta dopo 5 giri di
+# silenzio pur essendo ancora li': e' rientrata 15 minuti dopo come "solo AIS", ma perdendo i dati del giornale.
+ASSENZE_IN_PIU_PER_TOGLIERE = 2
+
+
+def in_silenzio_lungo(n):
+    return (n.get("assenze_ais") or 0) >= min(ASSENZE_TETTO, assenze_necessarie(n) + ASSENZE_IN_PIU_PER_TOGLIERE)
+
+
 def limite_segnale(ricezione_ok):
     """Quanto puo' essere vecchio l'ultimo segnale di una nave ferma per metterla in elenco.
     Con buona ricezione (si sentono le altre navi dei moli) basta un segnale di meno di 40 minuti;
@@ -1560,7 +1570,7 @@ def pulizia(dati, adesso):
                 n["ritardo"] = True                       # doveva partire, ma e' ancora li'
             else:
                 log("partita:", n["nome"]); continue
-        if silenzio and "giornale" not in n.get("fonti", ["giornale"]):
+        if in_silenzio_lungo(n) and "giornale" not in n.get("fonti", ["giornale"]):
             # solo AIS e adesso non la sente piu': se ne e' andata (o e' fuori copertura). Si ricorda
             # l'ultimo segnale, cosi' non rientra dal registro finche' non ne arriva uno nuovo.
             log("sparita dall'AIS (assente da", n.get("assenze_ais"), "giri con buona ricezione):", n["nome"])
