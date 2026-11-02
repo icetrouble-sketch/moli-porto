@@ -710,13 +710,26 @@ class DiagnosiDelGiro(unittest.TestCase):
              "registro": {"247000030": posizione(self.t0), "247000031": posizione(self.t0)}}
         self.assertNotIn("diagnosi, ferma nei moli", self.righe(d))
 
+    def test_cisterne_viste_solo_dall_ais_non_si_elencano(self):
+        d = {"navi": [], "escluse": [], "statici": {"257351060": {"nome": "BOW PLUTO", "tipo": 80, "lung": 157}},
+             "registro": {"257351060": posizione(self.t0)}}
+        self.assertNotIn("diagnosi, ferma nei moli", self.righe(d))
+
     def test_nave_seguita_assente_dal_registro_lo_dice(self):
         d = {"navi": [], "escluse": [], "statici": {}, "registro": {}}
-        self.assertIn("non c'e' nel registro", self.righe(d, set()))
-        seguita = A.SEGUITE[0]
+        vecchie, A.SEGUITE = A.SEGUITE, ("636092930",)
+        try:
+            self.assertIn("non c'e' nel registro", self.righe(d, set()))
+        finally:
+            A.SEGUITE = vecchie
+        seguita = "636092930"
         d = {"navi": [], "escluse": [], "statici": {seguita: {"nome": "CHENNAI EXPRESS", "tipo": 71, "lung": 304}},
              "registro": {seguita: posizione(self.t0)}}
-        testo = self.righe(d, set())
+        vecchie, A.SEGUITE = A.SEGUITE, (seguita,)
+        try:
+            testo = self.righe(d, set())
+        finally:
+            A.SEGUITE = vecchie
         self.assertIn("CHENNAI EXPRESS", testo)
         self.assertIn("NON sentita in questo giro", testo)
         self.assertIn("banchina piu' vicina MOLO ponente", testo)

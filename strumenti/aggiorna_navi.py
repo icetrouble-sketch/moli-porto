@@ -49,7 +49,7 @@ RICEZIONE_QUOTA = 0.6                       # quota di quelle sentita in questo 
 FINESTRA_RICEZIONE = timedelta(hours=2)      # le navi ferme nei moli sentite da meno di cosi' fanno da riferimento
 FINESTRA_RICEZIONE_MAX = timedelta(hours=8)  # ... e di notte, con i giri distanti, si allarga ma non oltre questo
 ASCOLTO_NOTTE = 1200                         # secondi di ascolto AIS nei giri della notte (22-7): sono pochi, si ascolta di piu'
-SEGUITE = ("636092930",)                    # MMSI di cui ogni giro scrive la storia (diagnosi: CHENNAI EXPRESS)
+SEGUITE = ()                    # MMSI di cui ogni giro scrive la storia (per una diagnosi; vuoto se non serve)
 # zona in cui ascoltare l'AIS: Mar Ligure e dintorni
 AIS_BOX = [[42.00, 6.00], [44.60, 11.00]]   # da Marsiglia all'Elba: le navi in arrivo si vedono ore prima
 
@@ -1389,6 +1389,8 @@ def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             and (s.get("lung") or 0) >= LUNGHEZZA_MINIMA_AIS_RINFUSE
         if s and (s.get("lung") or 0) < 100 and not rinfuse_piccola:
             continue                                  # rimorchiatori e barche: non interessano
+        if 80 <= tipo_ais_numero(s) <= 89:
+            continue                                  # cisterne viste solo dall'AIS: non si visitano (BOW PLUTO, 2/11)
         vicina = vicine[0]["d"] if vicine else 9999
         if vicina > 200 or (not s and vicina > 150):
             continue                                  # lontana da ogni banchina (all'ancora, in transito): non e' un caso da spiegare
