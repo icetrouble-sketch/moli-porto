@@ -2433,11 +2433,24 @@ window.avviaApp = function(){
       .then(function(){ inviando = false; return CODA.length ? inviaCoda() : caricaVisite(); })
       .catch(function(){ inviando = false; });
   }
+  /* La banchina scritta nel foglio: dove l'AIS l'ha vista ferma ("Bettolo", "Libia ponente"); se no l'accosto
+     del giornale senza le note (prima finiva nel foglio tutta la riga letta dal PDF, per esempio
+     "CALATA BETTOLO (Familiarizzazione=- ore diurne) dopo part. ..."). */
+  function banchinaVisita(n){
+    var d = n.dove || {}, a = n.ais || {};
+    if(a.ormeggiata && d.molo){
+      var m = String(d.molo).toLowerCase();
+      m = m.charAt(0).toUpperCase() + m.slice(1);
+      var l = d.lato || (d.punto === "testata" ? "testata" : "");
+      return l ? m + " " + l : m;
+    }
+    return String(n.accosto || "").split("(")[0].replace(/\s+dopo\s.*$/i, "").replace(/\s+/g, " ").trim();
+  }
   function nuovoId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function segnaVisita(n){
     var t = trova(n.dove.terminal);
     var c = { azione: "visita", id: nuovoId(), quando: new Date().toISOString(), nave: n.nome, imo: n.imo || "",
-              tipo: TIPI[n.tipo] || n.tipo || "", terminal: t ? t.nome : "", banchina: n.accosto || "",
+              tipo: TIPI[n.tipo] || n.tipo || "", terminal: t ? t.nome : "", banchina: banchinaVisita(n),
               da: leggi(CH_NOME, "") || "" };
     CODA.push(c); scrivi(CH_CODA, CODA);
     aggiornaNavi(); inviaCoda();
