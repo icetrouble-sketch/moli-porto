@@ -76,16 +76,22 @@
      Una nave arancione entra in porto, si ferma in banchina e diventa i tasti (1,5 secondi).
      Riquadro azzurro pastello, tasto Entra arancione, tasto Face ID verdino. */
   #pin{gap:14px}
-  .pin-scena{position:relative;width:260px;height:116px;flex:none}
-  .pin-scena > svg{display:block;width:260px;height:116px}
-  #pinNave{position:absolute;left:0;top:0;width:66px;height:26px;transform:translate(118px,30px);will-change:transform}
-  #pinNave svg{display:block;width:66px;height:26px}
-  #pinCard{width:min(320px, 100%);background:var(--azzurro);border:1.5px solid var(--azzurro-bordo);border-radius:22px;
-    padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 6px 22px rgba(70,110,140,.12)}
+  .pin-scena{position:relative;width:300px;height:150px;flex:none}
+  .pin-scena > svg{display:block;width:300px;height:150px}
+  #pinNave{position:absolute;left:0;top:0;width:92px;height:52px;transform:translate(148px,36px);will-change:transform}
+  #pinNave svg{display:block;width:92px;height:52px;overflow:visible}
+  #pinNave .fumo{transform-box:fill-box;transform-origin:center;animation:fumo .7s ease-out infinite}
+  @keyframes fumo{0%{transform:translate(-3px,6px) scale(.6);opacity:0}30%{opacity:1}100%{transform:translate(6px,-6px) scale(1.15);opacity:0}}
+  @media (prefers-reduced-motion: reduce){ #pinNave .fumo{animation:none} }
+  @media (max-width:340px){ .pin-scena{transform:scale(.9);margin:-8px 0} }
+  #pinCard{width:min(320px, 100%);background:var(--azzurro);border:2.6px solid var(--inchiostro);border-radius:24px;
+    padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:4px 5px 0 var(--inchiostro)}
   #pinCard #pinForm, #pinCard #btFace{width:100%}
-  #pinInput{border-color:var(--azzurro-bordo)}
+  #pinInput{border:2.6px solid var(--inchiostro)}
+  #pinCard .bottone{border:2.6px solid var(--inchiostro);box-shadow:0 3px 0 var(--inchiostro)}
+  #pinCard .bottone:active{transform:translateY(2px);box-shadow:0 1px 0 var(--inchiostro)}
   #pinInput:focus{border-color:var(--arancio)}
-  #btFace{background:var(--verdino);color:var(--verde);border:1.5px solid var(--verdino-bordo)}
+  #pinCard #btFace{background:var(--verdino);color:var(--verde)}
   #pinCard #pinErr{text-align:center}
   #pinCard #pinErr:empty{display:none}
   .pin-morph{position:fixed;z-index:130;pointer-events:none;border-radius:6px;background:var(--arancio)}
@@ -380,26 +386,47 @@
 
 <div id="pin">
   <div class="pin-scena" aria-hidden="true">
-    <svg viewBox="0 0 260 116">
-      <rect x="0" y="0" width="260" height="116" rx="22" fill="var(--acqua-porto)"/>
-      <path d="M0 22 Q0 0 22 0 H238 Q260 0 260 22 V34 H0 Z" fill="#F3EEDF"/>
-      <rect x="0" y="31" width="260" height="5" fill="#E6DFCB"/>
-      <rect x="38" y="20" width="22" height="9" rx="2" fill="#F6C9B4"/>
-      <rect x="66" y="16" width="16" height="13" rx="2" fill="#BFD7EA"/>
-      <rect x="88" y="21" width="20" height="8" rx="2" fill="#F6E3A8"/>
-      <path d="M206 30 V8 M206 8 H226 M222 8 V16" stroke="#B9AE95" stroke-width="2.4" stroke-linecap="round" fill="none"/>
-      <path d="M78 94 H248 Q252 94 252 98 V100 Q252 104 248 104 H78 Z" fill="#EDE6D2"/>
-      <circle cx="80" cy="99" r="5" fill="#F2A07F"/>
-      <g stroke="#FDFDF1" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".75">
-        <path d="M20 70 q5 -3 10 0 t10 0"/><path d="M150 72 q5 -3 10 0 t10 0"/><path d="M30 104 q5 -3 10 0 t10 0"/>
+    <svg viewBox="0 0 300 150">
+      <defs><clipPath id="pinCornice"><rect x="2" y="2" width="296" height="146" rx="26"/></clipPath></defs>
+      <g clip-path="url(#pinCornice)" stroke="#2A241F" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
+        <rect x="0" y="0" width="300" height="70" fill="#FDF1D6" stroke="none"/>
+        <circle cx="136" cy="24" r="12" fill="#F9D27A"/><path d="M136 4 v4 M136 40 v4 M116 24 h4 M152 24 h4 M122 10 l3 3 M147 35 l3 3 M150 10 l-3 3 M125 35 l-3 3" stroke-width="2.2"/>
+        <path d="M168 34 q4 -10 14 -7 q5 -8 14 -2 q9 -1 9 7 q0 6 -8 6 h-24 q-8 0 -5 -4z" fill="#FFFFFF"/>
+        <path d="M40 22 q3 -7 10 -5 q4 -6 11 -1 q7 0 6 6 q-1 4 -6 4 h-17 q-6 0 -4 -4z" fill="#FFFFFF"/>
+        <rect x="-4" y="56" width="308" height="16" fill="#F1E3C4"/>
+        <rect x="24" y="36" width="28" height="20" rx="2" fill="#F6B9A0"/>
+        <rect x="52" y="36" width="28" height="20" rx="2" fill="#BFD7EA"/>
+        <rect x="38" y="18" width="28" height="18" rx="2" fill="#F6E3A8"/>
+        <rect x="84" y="40" width="26" height="16" rx="2" fill="#CDE6D0"/>
+        <path d="M30 40 v12 M36 40 v12 M58 40 v12 M64 40 v12 M44 22 v10 M50 22 v10" stroke-width="1.6"/>
+        <path d="M222 56 V14 H262 M222 14 L208 22 M236 14 L222 28 M258 14 V26" fill="none" stroke-width="3"/>
+        <rect x="252" y="26" width="12" height="7" rx="1.5" fill="#F2A07F"/>
+        <rect x="-4" y="72" width="308" height="82" fill="#BFDDEE"/>
+        <path d="M-4 72 H304" stroke-width="2.6"/>
+        <g fill="none" stroke="#7FB2CF" stroke-width="2.2">
+          <path d="M24 96 q6 -5 12 0 t12 0"/><path d="M196 104 q6 -5 12 0 t12 0"/>
+          <path d="M60 128 q6 -5 12 0 t12 0"/><path d="M238 88 q6 -5 12 0 t12 0"/>
+        </g>
+        <path d="M128 132 H304 V146 H128 Q120 146 120 139 Q120 132 128 132z" fill="#E9DDBF"/>
+        <path d="M118 132 L122 104 H134 L138 132z" fill="#FFFFFF"/>
+        <path d="M120.6 118 H135.4 L136.6 126 H119.4z" fill="#F2A07F"/>
+        <path d="M121.8 110 H134.2" stroke-width="2"/>
+        <rect x="120" y="96" width="16" height="9" rx="2" fill="#F9D27A"/>
+        <path d="M118 96 L128 88 L138 96z" fill="#F2A07F"/>
       </g>
+      <rect x="2" y="2" width="296" height="146" rx="26" fill="none" stroke="#2A241F" stroke-width="3.2"/>
     </svg>
     <div id="pinNave">
-      <svg viewBox="0 0 66 26">
-        <path d="M2 13 H64 L57 24 H9 Z" fill="var(--arancio)"/>
-        <rect x="34" y="4" width="18" height="9" rx="2" fill="#FDFDF1" stroke="var(--arancio)" stroke-width="1.6"/>
-        <rect x="45" y="0" width="5" height="5" rx="1" fill="var(--arancio-scuro)"/>
-        <rect x="8" y="7" width="8" height="6" rx="1" fill="#F6C9B4"/><rect x="18" y="7" width="8" height="6" rx="1" fill="#BFD7EA"/>
+      <svg viewBox="0 0 92 52" stroke="#2A241F" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
+        <g class="fumo" fill="#FFFFFF" stroke-width="2"><circle cx="66" cy="8" r="4.5"/><circle cx="74" cy="4" r="3.2"/></g>
+        <path d="M60 28 V14 H70 V28" fill="var(--arancio-scuro)"/>
+        <path d="M60 18 H70" stroke-width="2" stroke="#FDFDF1"/>
+        <path d="M36 28 V18 Q36 16 38 16 H58 Q60 16 60 18 V28z" fill="#FDFDF1"/>
+        <circle cx="43" cy="22" r="2.4" fill="#BFDDEE" stroke-width="1.8"/><circle cx="52" cy="22" r="2.4" fill="#BFDDEE" stroke-width="1.8"/>
+        <path d="M4 26 H88 L80 46 Q79 48 76 48 H14 Q11 48 10 46z" fill="var(--arancio)"/>
+        <path d="M8 35 H85" stroke="#FDFDF1" stroke-width="2.4"/>
+        <rect x="12" y="20" width="10" height="6" rx="1" fill="#F6E3A8" stroke-width="2"/>
+        <rect x="22" y="20" width="10" height="6" rx="1" fill="#BFD7EA" stroke-width="2"/>
       </svg>
     </div>
   </div>
@@ -714,16 +741,18 @@
     animIngresso.forEach(function(a){ try{ a.cancel(); }catch(e){} });
     animIngresso = [];
     Array.prototype.forEach.call(document.querySelectorAll(".pin-morph"), function(x){ x.remove(); });
-    var fermo = "translate(118px,30px)";
+    var fermo = "translate(148px,36px)";
     var ridotto = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
     if(!naveEl.animate || ridotto){ elPin.classList.remove("intro"); naveEl.style.opacity = ""; return; }
     elPin.classList.add("intro");
     naveEl.style.opacity = "";
     var viaggio = naveEl.animate([
-      { transform: "translate(-70px,84px) rotate(-14deg)", opacity: 0 },
-      { offset: .18, opacity: 1 },
-      { offset: .55, transform: "translate(34px,52px) rotate(-10deg)" },
-      { offset: .85, transform: "translate(104px,32px) rotate(-1deg)" },
+      { transform: "translate(-96px,92px) rotate(-6deg)", opacity: 0 },
+      { offset: .15, opacity: 1 },
+      { offset: .35, transform: "translate(-4px,88px) rotate(4deg)" },
+      { offset: .55, transform: "translate(60px,72px) rotate(-7deg)" },
+      { offset: .75, transform: "translate(118px,46px) rotate(3deg)" },
+      { offset: .9, transform: "translate(146px,38px) rotate(-2deg)" },
       { transform: fermo }
     ], { duration: 900, easing: "cubic-bezier(.25,.6,.35,1)", fill: "forwards" });
     animIngresso.push(viaggio);
@@ -741,14 +770,14 @@
         b.classList.add("arrivo");
         var m = document.createElement("div");
         m.className = "pin-morph";
-        m.style.left = r0.left + "px"; m.style.top = (r0.top + r0.height * .45) + "px";
-        m.style.width = r0.width + "px"; m.style.height = (r0.height * .55) + "px";
+        m.style.left = r0.left + "px"; m.style.top = (r0.top + r0.height * .5) + "px";
+        m.style.width = r0.width + "px"; m.style.height = (r0.height * .42) + "px";
         document.body.appendChild(m);
         var a = m.animate([
-          { left: r0.left + "px", top: (r0.top + r0.height * .45) + "px", width: r0.width + "px", height: (r0.height * .55) + "px",
-            borderRadius: "4px 4px 14px 14px", backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--arancio").trim() || "#EC5E27" },
+          { left: r0.left + "px", top: (r0.top + r0.height * .5) + "px", width: r0.width + "px", height: (r0.height * .42) + "px",
+            borderRadius: "4px 4px 16px 16px", boxShadow: "0 0 0 2.6px #2A241F", backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--arancio").trim() || "#EC5E27" },
           { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px",
-            borderRadius: cs.borderTopLeftRadius, backgroundColor: cs.backgroundColor }
+            borderRadius: cs.borderTopLeftRadius, backgroundColor: cs.backgroundColor, boxShadow: "0 0 0 2.6px #2A241F" }
         ], { duration: 550, easing: "cubic-bezier(.5,0,.2,1)", fill: "forwards" });
         animIngresso.push(a);
         return a.finished.then(function(){ b.classList.remove("arrivo"); m.remove(); }, function(){ b.classList.remove("arrivo"); m.remove(); });
