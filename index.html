@@ -28,6 +28,11 @@
     --terra:#F7F5EA;
     --porto:#EEEADB;
     --verde:#3D6A43;
+    --azzurro:#E2EEF6;
+    --azzurro-bordo:#BCD5E6;
+    --acqua-porto:#C9DFEC;
+    --verdino:#D5EBD8;
+    --verdino-bordo:#B3D5B8;
     --ombra:0 2px 10px rgba(42,36,31,.10);
     color-scheme:light;
   }
@@ -66,6 +71,26 @@
   #faceInvito .fi-bottoni{display:flex;gap:8px}
   #faceInvito .bottone{flex:1;padding:12px}
   .marchio{width:56px;height:56px;border-radius:16px;background:var(--arancio);display:grid;place-items:center}
+
+  /* ---------- Ingresso: il porto, la nave e il riquadro (Mele, 2/11) ----------
+     Una nave arancione entra in porto, si ferma in banchina e diventa i tasti (1,5 secondi).
+     Riquadro azzurro pastello, tasto Entra arancione, tasto Face ID verdino. */
+  #pin{gap:14px}
+  .pin-scena{position:relative;width:260px;height:116px;flex:none}
+  .pin-scena > svg{display:block;width:260px;height:116px}
+  #pinNave{position:absolute;left:0;top:0;width:66px;height:26px;transform:translate(118px,30px);will-change:transform}
+  #pinNave svg{display:block;width:66px;height:26px}
+  #pinCard{width:min(320px, 100%);background:var(--azzurro);border:1.5px solid var(--azzurro-bordo);border-radius:22px;
+    padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 6px 22px rgba(70,110,140,.12)}
+  #pinCard #pinForm, #pinCard #btFace{width:100%}
+  #pinInput{border-color:var(--azzurro-bordo)}
+  #pinInput:focus{border-color:var(--arancio)}
+  #btFace{background:var(--verdino);color:var(--verde);border:1.5px solid var(--verdino-bordo)}
+  #pinCard #pinErr{text-align:center}
+  #pinCard #pinErr:empty{display:none}
+  .pin-morph{position:fixed;z-index:130;pointer-events:none;border-radius:6px;background:var(--arancio)}
+  #pin.intro #pinCard{opacity:0}
+  #pin .arrivo{visibility:hidden}
 
   /* ---------- Testata ---------- */
   header{padding:12px max(16px, env(safe-area-inset-right,0px)) 10px max(16px, env(safe-area-inset-left,0px));
@@ -354,11 +379,33 @@
 <body>
 
 <div id="pin">
-  <div class="marchio" aria-hidden="true">
-    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#FDFDF1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.2"/><path d="M12 7.2V21M5 13a7 7 0 0 0 14 0M8.5 10.5h7"/></svg>
+  <div class="pin-scena" aria-hidden="true">
+    <svg viewBox="0 0 260 116">
+      <rect x="0" y="0" width="260" height="116" rx="22" fill="var(--acqua-porto)"/>
+      <path d="M0 22 Q0 0 22 0 H238 Q260 0 260 22 V34 H0 Z" fill="#F3EEDF"/>
+      <rect x="0" y="31" width="260" height="5" fill="#E6DFCB"/>
+      <rect x="38" y="20" width="22" height="9" rx="2" fill="#F6C9B4"/>
+      <rect x="66" y="16" width="16" height="13" rx="2" fill="#BFD7EA"/>
+      <rect x="88" y="21" width="20" height="8" rx="2" fill="#F6E3A8"/>
+      <path d="M206 30 V8 M206 8 H226 M222 8 V16" stroke="#B9AE95" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+      <path d="M78 94 H248 Q252 94 252 98 V100 Q252 104 248 104 H78 Z" fill="#EDE6D2"/>
+      <circle cx="80" cy="99" r="5" fill="#F2A07F"/>
+      <g stroke="#FDFDF1" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".75">
+        <path d="M20 70 q5 -3 10 0 t10 0"/><path d="M150 72 q5 -3 10 0 t10 0"/><path d="M30 104 q5 -3 10 0 t10 0"/>
+      </g>
+    </svg>
+    <div id="pinNave">
+      <svg viewBox="0 0 66 26">
+        <path d="M2 13 H64 L57 24 H9 Z" fill="var(--arancio)"/>
+        <rect x="34" y="4" width="18" height="9" rx="2" fill="#FDFDF1" stroke="var(--arancio)" stroke-width="1.6"/>
+        <rect x="45" y="0" width="5" height="5" rx="1" fill="var(--arancio-scuro)"/>
+        <rect x="8" y="7" width="8" height="6" rx="1" fill="#F6C9B4"/><rect x="18" y="7" width="8" height="6" rx="1" fill="#BFD7EA"/>
+      </svg>
+    </div>
   </div>
   <h1>Moli del porto</h1>
   <p id="pinTesto">Inserisci il codice per aprire la mappa.</p>
+  <div id="pinCard">
   <button id="btFace" class="bottone b-primario" type="button" hidden>
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1 3.6 1 5 0"/></svg>
     Entra con Face ID</button>
@@ -369,6 +416,7 @@
     <label class="spunta-face" id="faceScelta" hidden><input type="checkbox" id="faceAttiva" checked> Le prossime volte entra con Face ID</label>
   </form>
   <p id="pinErr" role="alert"></p>
+  </div>
 </div>
 
 <header>
@@ -654,6 +702,68 @@
 
   mostraFace();
 
+  /* Ingresso animato (1,5 s): la nave entra in porto (0,9 s) e diventa i tasti visibili (0,55 s).
+     Un tocco la fa finire subito; con "Riduci movimento" non c'e'. */
+  var naveEl = document.getElementById("pinNave");
+  var animIngresso = [], saltaIngresso = false;
+  function finisciIngresso(){
+    animIngresso.forEach(function(a){ try{ if(a.playState === "running") a.finish(); }catch(e){} });
+  }
+  function introPorto(){
+    saltaIngresso = false;
+    animIngresso.forEach(function(a){ try{ a.cancel(); }catch(e){} });
+    animIngresso = [];
+    Array.prototype.forEach.call(document.querySelectorAll(".pin-morph"), function(x){ x.remove(); });
+    var fermo = "translate(118px,30px)";
+    var ridotto = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if(!naveEl.animate || ridotto){ elPin.classList.remove("intro"); naveEl.style.opacity = ""; return; }
+    elPin.classList.add("intro");
+    naveEl.style.opacity = "";
+    var viaggio = naveEl.animate([
+      { transform: "translate(-70px,84px) rotate(-14deg)", opacity: 0 },
+      { offset: .18, opacity: 1 },
+      { offset: .55, transform: "translate(34px,52px) rotate(-10deg)" },
+      { offset: .85, transform: "translate(104px,32px) rotate(-1deg)" },
+      { transform: fermo }
+    ], { duration: 900, easing: "cubic-bezier(.25,.6,.35,1)", fill: "forwards" });
+    animIngresso.push(viaggio);
+    viaggio.finished.then(function(){
+      // i tasti visibili: la nave "diventa" ciascuno di loro
+      var bersagli = [btFace, btn].filter(function(b){ return !b.hidden && b.offsetParent !== null; });
+      var r0 = naveEl.getBoundingClientRect();
+      elPin.classList.remove("intro");
+      var card = document.getElementById("pinCard");
+      animIngresso.push(card.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }],
+                                     { duration: 450, easing: "ease-out" }));
+      animIngresso.push(naveEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, fill: "forwards" }));
+      var arrivi = bersagli.map(function(b){
+        var r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+        b.classList.add("arrivo");
+        var m = document.createElement("div");
+        m.className = "pin-morph";
+        m.style.left = r0.left + "px"; m.style.top = (r0.top + r0.height * .45) + "px";
+        m.style.width = r0.width + "px"; m.style.height = (r0.height * .55) + "px";
+        document.body.appendChild(m);
+        var a = m.animate([
+          { left: r0.left + "px", top: (r0.top + r0.height * .45) + "px", width: r0.width + "px", height: (r0.height * .55) + "px",
+            borderRadius: "4px 4px 14px 14px", backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--arancio").trim() || "#EC5E27" },
+          { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px",
+            borderRadius: cs.borderTopLeftRadius, backgroundColor: cs.backgroundColor }
+        ], { duration: 550, easing: "cubic-bezier(.5,0,.2,1)", fill: "forwards" });
+        animIngresso.push(a);
+        return a.finished.then(function(){ b.classList.remove("arrivo"); m.remove(); }, function(){ b.classList.remove("arrivo"); m.remove(); });
+      });
+      if(saltaIngresso) finisciIngresso();          // toccato durante il viaggio: anche i tasti arrivano subito
+      return Promise.all(arrivi);
+    }).then(function(){
+      naveEl.style.opacity = "0";
+      setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 50);
+    }, function(){});
+  }
+  // un tocco durante l'ingresso lo fa finire subito
+  elPin.addEventListener("pointerdown", function(){ saltaIngresso = true; finisciIngresso(); });
+  window.PORTA.intro = introPorto;
+
   // usata di recente su questo telefono: si riapre senza codice
   var min = Number(ls(CHIAVE_MIN)) || 20;
   var ultimo = Number(ls(CHIAVE_USO)) || 0;
@@ -665,7 +775,7 @@
       .catch(function(){ ls(CHIAVE_KEY, null); elPin.hidden = false; });
   }else{
     ls(CHIAVE_KEY, null);
-    setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 300);
+    introPorto();
   }
 })();
 </script>
@@ -786,7 +896,8 @@ window.avviaApp = function(){
     inPin.value = ""; erPin.textContent = "";
     elPin.hidden = false;
     try{ chiudi(); }catch(e){}
-    setTimeout(function(){ try{ inPin.focus(); }catch(e){} }, 300);
+    if(window.PORTA && window.PORTA.intro) window.PORTA.intro();
+    else setTimeout(function(){ try{ inPin.focus(); }catch(e){} }, 300);
   }
   function sblocca(){
     elPin.hidden = true;
