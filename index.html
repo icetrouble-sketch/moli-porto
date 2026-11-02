@@ -250,7 +250,7 @@
     font-size:11.5px;font-weight:800;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
   .orario{display:flex;align-items:center;gap:8px;margin-top:10px}
   .orario label{font-size:14px;font-weight:600;color:var(--inchiostro);white-space:nowrap}
-  .orario input{flex:1;min-width:0;font:inherit;font-size:16px;font-weight:700;padding:7px 10px;border-radius:11px;
+  .orario select{flex:1;-webkit-appearance:none;appearance:none;text-align:center;min-width:0;font:inherit;font-size:16px;font-weight:700;padding:7px 10px;border-radius:11px;
     border:1.5px solid var(--linea);background:#fff;color:var(--inchiostro);font-variant-numeric:tabular-nums}
   .orario button{flex:none;padding:8px 12px;border-radius:999px;border:1.5px solid var(--linea);background:#fff;
     font-size:13.5px;font-weight:700;color:var(--grigio);cursor:pointer}
@@ -388,7 +388,7 @@
   </div>
   <div class="orario" id="orario" hidden>
     <label for="oraVisita">Ci vado alle</label>
-    <input type="time" id="oraVisita" step="900">
+    <select id="oraVisita"></select>
     <button type="button" id="oraAdesso" class="on">Adesso</button>
   </div>
 </header>
@@ -1623,7 +1623,8 @@ window.avviaApp = function(){
   var NAVI = null, naviErrore = "", tab = "mappe";
   var oraScelta = (function(){
     var o = leggi(CHIAVE_ORA, null);
-    return (o && o.giorno === oggi()) ? o.min : null;      // vale solo per oggi
+    if(!o || o.giorno !== oggi() || typeof o.min !== "number") return null;   // vale solo per oggi
+    return Math.min(1425, Math.round(o.min / 15) * 15);   // a quarti d'ora (prima si sceglieva al minuto)
   })();
   var BANCHINE = window.BANCHINE || {};
   var M_UNITA = 1.1132;                                   // metri per unita' della mappa
@@ -1918,10 +1919,21 @@ window.avviaApp = function(){
     b.addEventListener("click", function(){ impostaTab(b.getAttribute("data-tab")); });
   });
 
+  /* "Ci vado alle": un elenco a quarti d'ora (Mele, 2/11). Il campo orario dell'iPhone ignora il passo di 15 minuti
+     e fa scegliere ogni minuto. La prima voce e' l'ora di adesso, usata finche' non si sceglie un orario. */
   var inOra = document.getElementById("oraVisita"), btAdesso = document.getElementById("oraAdesso");
+  (function(){
+    var h = '<option value="">--:--</option>';
+    for(var q = 0; q < 1440; q += 15) h += '<option value="' + q + '">' + hhmm(q) + '</option>';
+    inOra.innerHTML = h;
+  })();
+  function mostraOra(V){
+    var primo = inOra.options[0];
+    primo.textContent = hhmm(adesso()) + " (adesso)";
+    inOra.value = oraScelta === null ? "" : String(oraScelta);
+  }
   inOra.addEventListener("change", function(){
-    var m = /^(\d{2}):(\d{2})/.exec(inOra.value || "");
-    oraScelta = m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    oraScelta = inOra.value === "" ? null : Number(inOra.value);
     scrivi(CHIAVE_ORA, oraScelta === null ? null : { giorno: oggi(), min: oraScelta });
     aggiornaNavi();
   });
@@ -1956,7 +1968,7 @@ window.avviaApp = function(){
   /* ---------- pannello delle previsioni ---------- */
   function aggiornaNavi(){
     var V = oraVisita();
-    if(document.activeElement !== inOra) inOra.value = hhmm(V);
+    if(document.activeElement !== inOra) mostraOra(V);
     btAdesso.classList.toggle("on", oraScelta === null);
     disegnaNavi(V);
     aggiornaVista();
