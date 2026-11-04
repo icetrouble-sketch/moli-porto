@@ -332,6 +332,9 @@
   .riepilogo b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
   .riepilogo span{font-size:11.5px;font-weight:600;color:var(--grigio)}
   .gruppo{margin:0 0 16px}
+  .blocco-navi{display:flex;align-items:baseline;gap:8px;margin:14px 0 10px;padding:0 0 6px;font-size:17px;border-bottom:2px solid currentColor}
+  .blocco-navi.dopo{margin-top:22px;opacity:.85}
+  .blocco-navi .n{font-size:12.5px;color:var(--grigio);font-weight:600}
   .gruppo h3{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:15px}
   .gruppo h3 .n{font-size:12.5px;color:var(--grigio);font-weight:600}
   .nv{background:#fff;border:1.5px solid var(--linea);border-radius:15px;padding:11px 12px;margin:0 0 8px;box-shadow:var(--ombra)}
@@ -2249,18 +2252,34 @@ window.avviaApp = function(){
          '<div><b>' + (conti.avvicina + conti.prevista) + '</b><span>Non ancora qui</span></div>' +
          '<div><b>' + conti.fatte + '</b><span>Visitate</span></div></div>';
 
-    var ordine = { ok: 0, conferma: 0, rischio: 1, probabile: 2, avvicina: 2, prevista: 3, rada: 4, uscita: 5, nv: 6, partita: 7 };
-    var senza = [];
+    // prima le navi gia' in porto (si possono visitare), poi quelle in arrivo o in dubbio (Mele, 4/11); dentro ogni blocco per terminal
+    var ordine = { ok: 0, conferma: 0, rischio: 1, probabile: 2, avvicina: 3, prevista: 4, rada: 5, uscita: 6, partita: 7, nv: 8 };
+    var inPorto = function(o){ return o.st.c === "ok" || o.st.c === "rischio" || o.st.c === "conferma"; };
+    var senza = [], blocchi = [[], []];
     tutti.forEach(function(t){
       if(!soloOggi && !agibile(t)) return;
       var g = gruppi[t.id];
       if(!g){ if(!soloOggi) senza.push(t.nome); return; }
-      g.sort(function(a, b){ return (visitata(a.n) - visitata(b.n)) || (ordine[a.st.c] - ordine[b.st.c]); });
-      var utili = g.filter(function(o){ return (o.st.c === "ok" || o.st.c === "rischio" || o.st.c === "conferma") && !visitata(o.n); }).length;
-      h += '<section class="gruppo"><h3><span class="pastiglia" style="background:' + t.colore + '"></span>' + esc(t.nome) +
-           '<span class="n">' + utili + (vecchi ? ' da confermare' : ' da visitare') + '</span></h3>';
-      g.forEach(function(o){ h += cartaNave(o.n, o.st); });
-      h += '</section>';
+      var a = g.filter(inPorto), b = g.filter(function(o){ return !inPorto(o); });
+      if(a.length) blocchi[0].push({ t: t, g: a });
+      if(b.length) blocchi[1].push({ t: t, g: b });
+    });
+    var nBlocco = function(bl){ return bl.reduce(function(s, x){ return s + x.g.length; }, 0); };
+    var titoli = [vecchi ? "In porto all'ultimo aggiornamento" : "Già in porto",
+                  "In arrivo, in dubbio o da non visitare"];
+    blocchi.forEach(function(bl, k){
+      if(!bl.length) return;
+      h += '<h2 class="blocco-navi' + (k ? ' dopo' : '') + '">' + titoli[k] + '<span class="n">' + nBlocco(bl) + (nBlocco(bl) === 1 ? ' nave' : ' navi') + '</span></h2>';
+      bl.forEach(function(x){
+        var t = x.t, g = x.g;
+        g.sort(function(p, q){ return (visitata(p.n) - visitata(q.n)) || (ordine[p.st.c] - ordine[q.st.c]); });
+        var utili = g.filter(function(o){ return inPorto(o) && !visitata(o.n); }).length;
+        h += '<section class="gruppo"><h3><span class="pastiglia" style="background:' + t.colore + '"></span>' + esc(t.nome) +
+             '<span class="n">' + (k ? g.length + (g.length === 1 ? ' nave' : ' navi')
+                                     : utili + (vecchi ? ' da confermare' : ' da visitare')) + '</span></h3>';
+        g.forEach(function(o){ h += cartaNave(o.n, o.st); });
+        h += '</section>';
+      });
     });
     if(senza.length) h += '<p class="nessuna">Nessuna nave prevista: ' + esc(senza.join(", ")) + '.</p>';
     if(soloOggi){
