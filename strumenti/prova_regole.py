@@ -1528,5 +1528,58 @@ class StrumentoMappa(unittest.TestCase):
                 os.environ.pop("CODICE_MAPPA", None)
 
 
+class DoppioniDelGiornale(unittest.TestCase):
+    """Controllo dei giri del 12/11 sera: EUROCARGO ALEXANDRIA due volte in elenco (giornale del 13/11 con l'IMO letto
+    in una riga sola)."""
+    def test_due_righe_della_stessa_nave_una_senza_imo_diventano_una(self):
+        r1 = riga("EUROCARGO ALEXANDRIA", "9074729", "RO/RO", "ARRIVI", "06.00", accosto="LIBIA LEV. RAD.")
+        r2 = riga("EUROCARGO ALEXANDRIA", "", "RO/RO", "PARTENZE", "22.00", accosto="LIBIA LEV. RAD.")
+        r2["imo_ok"] = False
+        navi, _ = A.navi_dal_giornale([r1, r2], "2026-11-13")
+        self.assertEqual(len(navi), 1)
+        n = navi[0]
+        self.assertEqual((n["imo"], n["arrivo"], n["partenza"]), ("9074729", "06.00", "22.00"))
+        self.assertNotIn("imo", n.get("dubbi", []))
+
+    def test_gemelle_con_imo_diversi_restano_due(self):
+        navi, _ = A.navi_dal_giornale([riga("ARGO I", "9074729", "CONT.", "ARRIVI", "06.00"),
+                                       riga("ARGO II", "9176187", "CONT.", "ARRIVI", "07.00")], "2026-11-13")
+        self.assertEqual(len(navi), 2)
+
+    def test_gemelle_senza_imo_con_numeri_diversi_restano_due(self):
+        r1, r2 = riga("ARGO I", "", "CONT.", "ARRIVI", "06.00"), riga("ARGO II", "", "CONT.", "ARRIVI", "07.00")
+        r1["imo_ok"] = r2["imo_ok"] = False
+        navi, _ = A.navi_dal_giornale([r1, r2], "2026-11-13")
+        self.assertEqual(len(navi), 2)
+
+    def test_il_doppione_gia_in_memoria_si_unisce_al_giro(self):
+        t = quando("2026-11-12", "23:00")
+        con = {"nome": "EUROCARGO ALEXANDRIA", "imo": "9074729", "mmsi": "247000001", "tipo": "RO/RO", "giorno": "2026-11-12",
+               "fonti": ["giornale"], "ais": {"ormeggiata": True}, "visto_banchina": t.isoformat(),
+               "dove": {"terminal": "sangiorgio"}, "in_porto_dal": "2026-11-12"}
+        senza = {"nome": "EUROCARGO ALEXANDRIA", "imo": "", "tipo": "RO/RO", "giorno": "2026-11-13", "fonti": ["giornale"],
+                 "partenza": "22.00", "partenza_giorno": "2026-11-13", "dove": {"terminal": "sangiorgio"}, "dubbi": ["imo"]}
+        d = {"navi": [senza, con]}
+        A.pulizia(d, t)
+        self.assertEqual(len(d["navi"]), 1)
+        n = d["navi"][0]
+        self.assertEqual((n["imo"], n["mmsi"], n["partenza"]), ("9074729", "247000001", "22.00"))
+        self.assertTrue(n["ais"]["ormeggiata"])
+
+
+class DiagnosiEscluse(unittest.TestCase):
+    def test_nave_esclusa_ferma_nei_moli_non_fa_del_giro_un_avviso(self):
+        t0 = quando("2026-11-12", "20:00")
+        d = {"navi": [], "escluse": [{"nome": "SIDER RODI", "imo": "", "motivo": "mezzo della diga (dal giornale)"}],
+             "registro": {"255806158": posizione(t0, 3)},
+             "statici": {"255806158": {"nome": "SIDER RODI", "tipo": 70, "lung": 108}}}
+        del A.RIEPILOGO[:]
+        A.diagnostica_moli(d, BANCHINE_PROVA, t0, {"255806158"}, True)
+        testo = "\n".join(A.RIEPILOGO)
+        self.assertNotIn("diagnosi, ferma nei moli", testo)
+        self.assertIn("escluse dalle regole, ferme nei moli: SIDER RODI", testo)
+        self.assertFalse(any(k in testo for k in A.RIGHE_PROBLEMA))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

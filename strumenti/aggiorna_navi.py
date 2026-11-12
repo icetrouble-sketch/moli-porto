@@ -555,6 +555,60 @@ def escludi_non_visitabili(dati, adesso):
     dati["escluse"] = [e for e in dati.get("escluse", []) if (e.get("quando") or "") >= limite]
 
 
+def unisci_righe_gemelle(navi):
+    """La stessa nave in due righe dello stesso giornale (es. arrivo e partenza), con l'IMO letto in una sola: prima
+    diventavano due navi (controllo del 12/11: EUROCARGO ALEXANDRIA doppia dal giornale del 13/11, una con l'AIS e
+    una "IMO non letto"). Si uniscono se il nome e' lo stesso (stessa_nave: con due IMO validi diversi mai)."""
+    tenute = []
+    for n in sorted(navi, key=lambda x: not imo_valido(x.get("imo"))):      # prima quelle con l'IMO
+        g = next((x for x in tenute if (not imo_valido(x.get("imo")) or not imo_valido(n.get("imo")))
+                  and stessa_nave(x["nome"], x.get("imo"), n["nome"], n.get("imo"))), None)
+        if g is None:
+            tenute.append(n)
+            continue
+        log("stessa nave in due righe del giornale, unite:", g["nome"], "/", n["nome"])
+        for campo in EVENTI:
+            if n.get(campo) and not g.get(campo):
+                for suf in ("", "_giorno", "_g"):
+                    if n.get(campo + suf) is not None:
+                        g[campo + suf] = n[campo + suf]
+                if campo == "arrivo":
+                    g["dove"], g["accosto"] = n["dove"], n["accosto"]
+        for campo in ("imo", "loa", "larg", "tipo", "spostamento", "nota"):
+            if n.get(campo) and not g.get(campo):
+                g[campo] = n[campo]
+        dubbi = set(g.get("dubbi", [])) | set(n.get("dubbi", []))
+        if imo_valido(g.get("imo")):
+            dubbi.discard("imo")
+        if dubbi:
+            g["dubbi"] = sorted(dubbi)
+        else:
+            g.pop("dubbi", None)
+    return tenute
+
+
+def togli_doppioni(dati, adesso):
+    """Rete di sicurezza a ogni giro: due voci dell'elenco che sono la stessa nave (una senza IMO valido) si uniscono.
+    Toglie anche i doppioni gia' in memoria prima della correzione del 12/11."""
+    tenute = []
+    for n in sorted(dati.get("navi", []), key=lambda x: not imo_valido(x.get("imo"))):
+        k = next((i for i, x in enumerate(tenute) if (not imo_valido(x.get("imo")) or not imo_valido(n.get("imo")))
+                  and stessa_nave(x["nome"], x.get("imo"), n["nome"], n.get("imo"))), None)
+        if k is None:
+            tenute.append(n)
+            continue
+        log("doppione in elenco, unito:", tenute[k]["nome"], "/", n["nome"])
+        con_imo = tenute[k]
+        unita = fondi_navi(n, con_imo, adesso)
+        for campo in ("ais", "dove", "accosto", "visto_banchina", "mmsi", "in_porto_dal", "conferma"):
+            if con_imo.get(campo) and not unita.get(campo):
+                unita[campo] = con_imo[campo]
+        unita["fonti"] = sorted(set(n.get("fonti", [])) | set(con_imo.get("fonti", [])))
+        tenute[k] = unita
+    if len(tenute) != len(dati.get("navi", [])):
+        dati["navi"] = tenute
+
+
 def navi_dal_giornale(righe, data):
     """Navi dei terminal della mappa dal giornale del giorno `data`.
     Restituisce (navi, escluse): le escluse sono chemical e ro-ro con passeggeri."""
@@ -651,7 +705,7 @@ def navi_dal_giornale(righe, data):
                 n["nota"] = (n.get("nota", "") + " Orario non leggibile nel giornale: " + r["nota_ora"] + ".").strip()
         if not r["imo_ok"]:
             n.setdefault("dubbi", []).append("imo")
-    navi = list(per_nave.values())
+    navi = unisci_righe_gemelle(list(per_nave.values()))
     for n in navi:
         # partenza la mattina e ritorno la sera (es. MOVIMENTI "DA CANEPA A RADA" alle 8, "DA RADA A CANEPA" alle 20):
         # la partenza riguarda la sosta di prima e non deve togliere la nave che torna (controllo del 12/11)
@@ -1425,7 +1479,7 @@ def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
     reg, sta = dati.get("registro", {}), dati.get("statici", {})
     in_elenco = {n.get("mmsi") for n in dati.get("navi", []) if n.get("mmsi")}
     in_elenco |= {n.get("mmsi") for n in dati.get("non_visitare", []) if n.get("mmsi")}
-    righe = []
+    righe, escluse_ferme = [], []
     for mmsi, p in reg.items():
         if mmsi in in_elenco or mmsi in SEGUITE or p["sog"] >= 2 or not nei_moli(p):
             continue
@@ -1442,7 +1496,15 @@ def diagnostica_moli(dati, banchine, adesso, sentite=None, ricezione_ok=None):
         vicina = vicine[0]["d"] if vicine else 9999
         if vicina > 200 or (not s and vicina > 150):
             continue                                  # lontana da ogni banchina (all'ancora, in transito): non e' un caso da spiegare
+        imo_s = s.get("imo") if imo_valido(s.get("imo")) else ""
+        if e_esclusa(dati, imo_s, (s.get("nome") or p.get("nome") or "").upper(), mmsi):
+            # esclusa per una regola (es. SIDER RODI tra i "mezzi diga", 12/11): il motivo e' noto, si scrive senza
+            # fare del giro un avviso (prima ogni giro era un avviso e nascondeva quelli veri)
+            escluse_ferme.append((s.get("nome") or p.get("nome") or mmsi) + " (" + (vicine[0]["molo"] + " " + vicine[0]["lato"] if vicine else "?") + ")")
+            continue
         righe.append(descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite))
+    if escluse_ferme:
+        log("escluse dalle regole, ferme nei moli:", ", ".join(sorted(escluse_ferme)))
     for r in sorted(righe)[:30]:
         log("diagnosi, ferma nei moli:", r)
     if len(righe) > 30:
@@ -1591,6 +1653,7 @@ def pulizia(dati, adesso):
     """Toglie le navi partite: partenza passata (salvo che l'AIS la veda ancora
     ferma in banchina dopo l'orario), AIS che la vede uscire, o nessuna conferma
     da troppo tempo."""
+    togli_doppioni(dati, adesso)
     tenute = []
     for n in dati.get("navi", []):
         visto = datetime.fromisoformat(n["visto_banchina"]) if n.get("visto_banchina") else None
