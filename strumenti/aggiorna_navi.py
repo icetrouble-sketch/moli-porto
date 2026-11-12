@@ -653,6 +653,20 @@ def navi_dal_giornale(righe, data):
             n.setdefault("dubbi", []).append("imo")
     navi = list(per_nave.values())
     for n in navi:
+        # partenza la mattina e ritorno la sera (es. MOVIMENTI "DA CANEPA A RADA" alle 8, "DA RADA A CANEPA" alle 20):
+        # la partenza riguarda la sosta di prima e non deve togliere la nave che torna (controllo del 12/11)
+        if n.get("arrivo") and n.get("partenza") and n.get("arrivo_giorno") == n.get("partenza_giorno"):
+            ma, mp = minuti(n["arrivo"]), minuti(n["partenza"])
+            if ma is not None and mp is not None and mp < ma:
+                log("partenza prima dell'arrivo, e' la sosta di prima:", n["nome"], "parte", n["partenza"], "torna", n["arrivo"])
+                n["partenza_prima"] = n["partenza"]
+                for suf in ("", "_giorno", "_g"):
+                    n.pop("partenza" + suf, None)
+                n["partenza"] = None
+                if "dubbi" in n:
+                    n["dubbi"] = [x for x in n["dubbi"] if x != "partenza"]
+                    if not n["dubbi"]:
+                        n.pop("dubbi")
         n["dove_giornale"] = dict(n["dove"])
         if "dubbi" in n:
             n["dubbi"] = sorted(set(n["dubbi"]))
@@ -714,7 +728,7 @@ async def ascolta_ais(chiave_ais, secondi):
                     break
                 m = json.loads(raw)
                 if "error" in m:
-                    log("aisstream:", m["error"]); break
+                    log("ATTENZIONE: aisstream ha rifiutato l'ascolto (chiave scaduta o non valida?):", m["error"]); break
                 md = m.get("MetaData", {}); mmsi = str(md.get("MMSI", ""))
                 if m.get("MessageType") == "PositionReport":
                     p = m["Message"]["PositionReport"]
@@ -796,14 +810,22 @@ def parallela(rotta, rilievo, tolleranza=30):
     return abs((rotta - rilievo + 90) % 180 - 90) <= tolleranza
 
 
-def alla_banchina(lat, lon, banchine, lung=0, rotta=None):
+# Nave ferma dentro i moli, ormeggiata per l'AIS (stato 5) o con la prua parallela alla banchina, ma oltre la fine
+# del tratto disegnato: la banchina vera e' piu' lunga di quella della mappa. Controllo del 12/11: una nave di 130 m
+# ormeggiata 120 m oltre la fine del tratto risultava "in rada" (la regola delle navi lunghe valeva solo da 150 m).
+OLTRE_TRATTO_MAX = 150                      # metri oltre la fine del tratto, per qualunque lunghezza
+
+
+def alla_banchina(lat, lon, banchine, lung=0, rotta=None, stato=None):
     """Se il punto e' a ridosso di una banchina dei nostri moli, dice quale:
     (molo, lato, terminal, metri dalla radice lungo la banchina).
     Una nave lunga (150 m e piu') puo' avere l'antenna molto oltre la fine del tratto disegnato sulla mappa:
     la banchina vera e' piu' lunga, o la nave sporge (la Chennai Express a Ponte Etiopia: 304 m, antenna a
     27 m dalla linea ma 112 m oltre la fine del tratto). Se non c'e' una banchina entro 75 m, per queste navi si
     accetta il lato di una banchina con l'antenna a non piu' di 50 m dalla sua linea, dalla parte dell'acqua,
-    non oltre la meta' della lunghezza della nave dopo la fine del tratto, con la prua parallela alla banchina."""
+    non oltre la meta' della lunghezza della nave dopo la fine del tratto, con la prua parallela alla banchina.
+    Per qualunque nave ferma dentro i moli, ormeggiata per l'AIS (stato 5) o parallela alla banchina, vale lo stesso
+    fino a OLTRE_TRATTO_MAX metri oltre la fine del tratto."""
     misure = misura_banchine(lat, lon, banchine)
     for m in misure:
         if m["d"] < 75 and m["verso"] > -15:
@@ -813,13 +835,19 @@ def alla_banchina(lat, lon, banchine, lung=0, rotta=None):
             if m["perp"] <= 50 and m["verso"] > -15 and m["fuori"] <= 0.5 * lung and parallela(rotta, m["rilievo"]):
                 return {"molo": m["molo"], "lato": m["lato"], "terminal": m["terminal"], "s_m": m["s_m"],
                         "oltre_m": round(m["fuori"])}
+    if nei_moli({"lat": lat, "lon": lon}):
+        for m in sorted(misure, key=lambda x: (x["fuori"], x["perp"])):
+            if m["perp"] <= 50 and m["verso"] > -15 and m["fuori"] <= OLTRE_TRATTO_MAX \
+                    and (stato == 5 or parallela(rotta, m["rilievo"])):
+                return {"molo": m["molo"], "lato": m["lato"], "terminal": m["terminal"], "s_m": m["s_m"],
+                        "oltre_m": round(m["fuori"])}
     return None
 
 
 def dove_nave(dati, mmsi, p, banchine, loa=0):
     """alla_banchina per una nave dell'AIS: lunghezza dai dati statici (o dal giornale) e prua dall'ultimo segnale."""
     s = (dati.get("statici") or {}).get(mmsi) or {}
-    return alla_banchina(p["lat"], p["lon"], banchine, s.get("lung") or loa or 0, p.get("rotta"))
+    return alla_banchina(p["lat"], p["lon"], banchine, s.get("lung") or loa or 0, p.get("rotta"), p.get("stato"))
 
 
 def nei_moli(p):
@@ -1224,6 +1252,16 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             n["visto_banchina"] = quando.isoformat()
             n.setdefault("in_porto_dal", oggi)
             n.pop("uscita_vista", None)
+        elif p["sog"] < 0.7 and nei_moli(p):
+            # ferma dentro il porto ma non su una banchina della mappa: non e' "in rada" (controllo del 12/11).
+            # L'app la dice "Ferma in porto"; nel riepilogo diventa un avviso, per sistemare la banchina della mappa.
+            a["ferma_nei_moli"] = True
+            vicine = misura_banchine(p["lat"], p["lon"], banchine)
+            if vicine:
+                a["banchina_vicina"] = vicine[0]["molo"] + " " + vicine[0]["lato"]
+                a["m_banchina"] = int(round(vicine[0]["d"]))
+            log("diagnosi, ferma nei moli (in elenco, banchina non riconosciuta):",
+                descrivi_nave_ais(dati, banchine, mmsi, p, adesso, ricezione_ok, sentite))
         elif p["stato"] == 1 or (d < 8 and p["sog"] < 0.7):
             a["ancora"] = True
         elif p["sog"] >= 2 or nei_moli(p):
@@ -1278,7 +1316,7 @@ def aggiorna_presenze(dati, banchine, adesso, sentite=None, ricezione_ok=None):
             continue
         nome = (s.get("nome") or p.get("nome") or "").upper()
         log("in banchina secondo l'AIS:", nome, dove["molo"], dove["lato"],
-            "(nave lunga, oltre la fine del tratto di %d m)" % dove["oltre_m"] if dove.get("oltre_m") else "")
+            "(oltre la fine del tratto disegnato di %d m)" % dove["oltre_m"] if dove.get("oltre_m") else "")
         dati["navi"].append({
             "nome": nome, "imo": s.get("imo") if imo_valido(s.get("imo")) else "",
             "mmsi": mmsi, "tipo": "RO/RO" if tipo_ais(s.get("tipo")) == "PASS." else tipo_ais(s.get("tipo")),
@@ -1565,6 +1603,7 @@ def pulizia(dati, adesso):
             vaga = not re.fullmatch(r"\d{2}\.\d{2}", str(n.get("partenza") or ""))
             # il sito da' un orario preciso: vale piu' di uno vago del giornale ("P.M." = fino a mezzanotte); se no la piu' tarda
             part = pc if part is None or vaga or pc > part else part
+        n.pop("ritardo", None)                                # si ricalcola a ogni giro (controllo del 12/11)
         if part is not None and adesso > part + timedelta(minutes=90):
             if visto and visto > part + timedelta(minutes=30) and a.get("ormeggiata") and not silenzio:
                 n["ritardo"] = True                       # doveva partire, ma e' ancora li'
@@ -1579,7 +1618,10 @@ def pulizia(dati, adesso):
                 dati.setdefault("spente", {})[n["mmsi"]] = ultimo
             continue
         uscita = datetime.fromisoformat(n["uscita_vista"]) if n.get("uscita_vista") else None
-        if uscita and not a.get("ormeggiata"):
+        arr_dopo = istante(n.get("arrivo_giorno") or n.get("giorno"), n.get("arrivo")) if n.get("arrivo") else None
+        if uscita and arr_dopo is not None and arr_dopo > uscita:
+            pass                                              # e' uscita, ma il giornale la fa tornare piu' tardi
+        elif uscita and not a.get("ormeggiata"):
             # l'AIS l'ha vista andarsene: per un'ora e mezza resta 'si allontana', poi si toglie
             if adesso - uscita > timedelta(minutes=90):
                 log("uscita dal porto (AIS):", n["nome"]); continue
@@ -1693,7 +1735,7 @@ def secondi_ascolto(ora):
 # programma (posizioni AIS di tutto il Mar Ligure degli ultimi 3 giorni, dati delle navi, esclusioni, taratura...)
 # sta in stato.enc.json, cifrato allo stesso modo, che l'app non scarica: cosi' il file del telefono resta piccolo
 # (prima cresceva di giorno in giorno: 230 KB il 28/10, scaricati a ogni apertura).
-CAMPI_APP = ("navi", "non_visitare", "data", "giornali", "fonte", "letto", "ais", "aggiornato", "esempio")
+CAMPI_APP = ("navi", "non_visitare", "data", "giornali", "fonte", "letto", "ais", "ais_ultimo", "aggiornato", "esempio")
 
 
 def dati_per_app(dati):
@@ -1804,6 +1846,11 @@ def main():
             "buona" if ricezione_ok else "scarsa o non giudicabile (la regola dell'assenza non scatta)")
         aggiorna_presenze(dati, banchine, adesso, sentite, ricezione_ok)
         dati["ais"] = bool(pos)
+        if pos:
+            dati["ais_ultimo"] = adesso.isoformat()            # l'app avvisa se le posizioni AIS sono ferme da tempo
+        else:
+            log("ATTENZIONE: nessuna posizione AIS ricevuta in questo giro (servizio fermo o chiave non valida?);",
+                "ultime posizioni ricevute:", dati.get("ais_ultimo") or "mai")
     else:
         dati["ais"] = False
         sentite, ricezione_ok = None, None

@@ -1880,6 +1880,11 @@ window.avviaApp = function(){
                d: "All'ultimo aggiornamento (" + quandoDato(agg) + ") l'AIS la vedeva ferma in banchina, ma i dati sono fermi da " +
                   testoEta(etaDati()) + ": potrebbe essere già partita. Controlla su VesselFinder prima di andare." };
     }
+    if((st.c === "ok" || st.c === "rischio") && aisFermo()){
+      return { c: "conferma", t: "Da confermare",
+               d: "Alle " + String((n.ais && n.ais.quando) || "").replace(".", ":") + " l'AIS la vedeva ferma in banchina, ma il servizio AIS " +
+                  testoAisFermo() + ": potrebbe essere già partita. Controlla su VesselFinder prima di andare." };
+    }
     return st;
   }
   function statoNaveDaiDati(n, V){
@@ -1896,6 +1901,16 @@ window.avviaApp = function(){
       // stima dalla posizione reale: si tiene la piu' tarda tra giornale e AIS
       var m = minutiDaIso(ais.eta_iso);
       if(m !== null && m > a[1]) a = rangeDaMinuti(m);
+    }
+    // il sito del porto da' un orario di partenza preciso: vale piu' di uno vago del giornale ("P.M."), se no il piu' tardo
+    // (stessa regola del programma che aggiorna le navi)
+    var cp = (n.conferma && n.conferma.tipo === "partenza" && n.conferma.quando) ? minutiDaIso(n.conferma.quando) : null;
+    if(cp !== null && (!p || p[2] || cp > p[1])) p = rangeDaMinuti(cp);
+    // nave che parte la mattina e torna la sera (stesso giornale): prima del ritorno vale la partenza di prima
+    var ritorno = n.partenza_prima ? oraN(n, "arrivo") : null;
+    if(!p && ritorno && V < ritorno[0]){
+      var pp = orario(n.partenza_prima, n.arrivo_giorno || n.giorno || (NAVI && NAVI.data));
+      if(pp && V < pp[1] + 90) p = pp;
     }
     if(n.ritardo) p = null;                                   // doveva partire ma e' ancora li'
     if(n.dove.in_rada && !ferma)
@@ -1920,6 +1935,12 @@ window.avviaApp = function(){
                  d: "Alle " + ais.quando.replace(".", ":") + " l'AIS la vedeva in manovra a " + ais.m_banchina + " m da " + ais.banchina_probabile +
                     ", poi più nessun segnale: in alcune banchine il servizio AIS che usiamo non riceve le navi ormeggiate. " +
                     "Quasi certamente ha attraccato: controlla su VesselFinder. Non la segno sulla mappa né la conto finché l'AIS non la vede ferma." };
+      if(ais && ais.ferma_nei_moli)
+        return { c: "probabile", t: "Ferma in porto",
+                 d: "Alle " + ais.quando.replace(".", ":") + " l'AIS la vede ferma dentro il porto" +
+                    (ais.banchina_vicina ? ", a " + ais.m_banchina + " m da " + ais.banchina_vicina : "") +
+                    ", ma non su una banchina disegnata sulla mappa: probabilmente è ormeggiata lì. Controlla su VesselFinder. " +
+                    "Non la segno sulla mappa né la conto finché non è riconosciuta in banchina." };
       if(ais && (ais.manovra || ais.eta_iso))
         return { c: "avvicina", t: "In avvicinamento",
                  d: ais.manovra ? "Alle " + ais.quando.replace(".", ":") + " l'AIS la vede in manovra dentro il porto: sta per attraccare."
@@ -2136,6 +2157,25 @@ window.avviaApp = function(){
     return a && !isNaN(a) ? Math.max(0, Math.round((Date.now() - a.getTime()) / 60000)) : null;
   }
   function datiVecchi(){ var e = etaDati(); return e !== null && e > DATI_VECCHI_MIN; }
+  /* AIS fermo (controllo del 12/11): il file si aggiorna ogni 15 minuti anche se il servizio AIS non manda niente
+     (chiave scaduta, servizio giu'). Senza questo controllo le navi restavano "In tempo" fino a 6 ore con l'ultima
+     posizione. NAVI.ais_ultimo = l'ultimo giro in cui sono arrivate posizioni. Se i dati sono gia' vecchi vale
+     quell'avviso, non questo. */
+  var AIS_FERMO_MIN = 45;
+  function etaAis(){
+    if(!NAVI || NAVI.esempio) return null;
+    if(NAVI.ais_ultimo){
+      var a = new Date(NAVI.ais_ultimo);
+      if(!isNaN(a)) return Math.max(0, Math.round((Date.now() - a.getTime()) / 60000));
+    }
+    return NAVI.ais === false ? Infinity : null;
+  }
+  function aisFermo(){ var e = etaAis(); return !datiVecchi() && e !== null && e > AIS_FERMO_MIN; }
+  function testoAisFermo(){
+    var e = etaAis();
+    return e === Infinity ? "non manda posizioni" : "non manda posizioni da " + testoEta(e);
+  }
+  function datiIncerti(){ return datiVecchi() || aisFermo(); }
   function testoEta(min){
     if(min < 60) return min + " min";
     var h = Math.floor(min / 60), m = min % 60;
@@ -2157,7 +2197,7 @@ window.avviaApp = function(){
     disegnaNavi(V);
     aggiornaVista();
     // riga sulle schede dei terminal e pillola sulla mappa
-    var conta = {}, tot = 0, vecchi = datiVecchi();
+    var conta = {}, tot = 0, vecchi = datiIncerti();
     var cosa = vecchi ? function(k){ return k === 1 ? " nave da confermare" : " navi da confermare"; }
                       : function(k){ return k === 1 ? " nave da visitare" : " navi da visitare"; };
     if(NAVI) NAVI.navi.forEach(function(n){
@@ -2175,7 +2215,7 @@ window.avviaApp = function(){
     var pill = document.getElementById("pillNavi");
     pill.hidden = !NAVI;
     pill.classList.toggle("vecchio", vecchi);
-    pill.innerHTML = ICONA_NAVE + "<span>" + (vecchi ? "Dati di " + testoEta(etaDati()) + " fa · " + tot + cosa(tot)
+    pill.innerHTML = ICONA_NAVE + "<span>" + (vecchi ? (datiVecchi() ? "Dati di " + testoEta(etaDati()) + " fa · " : "AIS fermo · ") + tot + cosa(tot)
                                                       : tot + cosa(tot) + " alle " + hhmm(V)) +
                      (naviSenzaSegnale ? " · senza segnale" : "") + "</span>";
     aggiornaConteggioOggi(V);
@@ -2205,15 +2245,21 @@ window.avviaApp = function(){
       h += '<div class="nota attenzione" style="margin:0 0 10px">Il giornale è del <b>' + esc(giornoEsteso(NAVI.data)) +
            '</b>: quello di oggi non è ancora arrivato. Gli orari valgono per quel giorno.</div>';
     var agg = NAVI.aggiornato ? new Date(NAVI.aggiornato) : null;
+    if(erroreFoglio)
+      h += '<div class="nota attenzione" style="margin:0 0 10px">' + esc(erroreFoglio) + '</div>';
     if(naviSenzaSegnale)
       h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Senza segnale.</b> Mostro gli ultimi dati salvati su questo telefono ' +
            '(aggiornati ' + esc(quandoDato(agg)) + '). Riprovo da solo appena torna la rete.</div>';
     if(datiVecchi())
       h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Dati non aggiornati da ' + testoEta(etaDati()) + '.</b> Ultimo aggiornamento ' +
            esc(quandoDato(agg)) + '. Le navi possono essere già partite o arrivate: controlla su VesselFinder.</div>';
+    else if(aisFermo())
+      h += '<div class="nota attenzione" style="margin:0 0 10px"><b>Il servizio AIS ' + testoAisFermo() + '.</b> ' +
+           (NAVI.ais_ultimo ? 'Ultime posizioni ricevute ' + esc(quandoDato(new Date(NAVI.ais_ultimo))) + '. ' : '') +
+           'Il giornale si aggiorna, ma non so se le navi sono ancora in banchina: controlla su VesselFinder.</div>';
     h += '<p class="pn-info">Giornale del <b>' + esc(giornoEsteso(NAVI.data)) + '</b>' +
          (agg && !isNaN(agg) ? ' · aggiornato ' + esc(quandoDato(agg)) : '') +
-         ' · posizioni AIS ' + (NAVI.ais ? 'attive' : 'non ancora attive') + '</p>';
+         ' · posizioni AIS ' + (NAVI.ais ? 'attive' : (NAVI.ais_ultimo ? 'non ricevute nell\'ultimo giro' : 'non ancora attive')) + '</p>';
 
     // scheda "Navi di oggi": solo le navi con la stella; quelle scelte restano qui anche se il molo non e' piu' agibile
     var soloOggi = tab === "oggi";
@@ -2229,7 +2275,7 @@ window.avviaApp = function(){
       return;
     }
 
-    var conti = { ok: 0, rischio: 0, conferma: 0, avvicina: 0, prevista: 0, fatte: 0 }, vecchi = datiVecchi();
+    var conti = { ok: 0, rischio: 0, conferma: 0, avvicina: 0, prevista: 0, fatte: 0 }, vecchi = datiIncerti();
     var gruppi = {}, trovate = {};
     NAVI.navi.forEach(function(n){
       if(soloOggi){
@@ -2358,6 +2404,7 @@ window.avviaApp = function(){
     if(a.attracco_probabile) return t + "in manovra vicino a " + a.banchina_probabile + ", poi più nessun segnale.";
     if(a.entrata_probabile) return t + (a.manovra ? "in manovra dentro il porto" : "in entrata, a " + a.dist_nm + " miglia") + ", poi più nessun segnale.";
     if(a.manovra) return t + "in manovra dentro il porto.";
+    if(a.ferma_nei_moli) return t + "ferma dentro il porto" + (a.banchina_vicina ? ", a " + a.m_banchina + " m da " + a.banchina_vicina : "") + ".";
     if(a.ancora) return t + "ferma in rada, a " + a.dist_nm + " miglia.";
     var e = a.eta_iso ? minutiDaIso(a.eta_iso) : null;
     return t + "a " + a.dist_nm + " miglia, " + a.vel + " nodi" + (e !== null ? ", arrivo stimato " + quando(rangeDaMinuti(e)) : "") + ".";
@@ -2447,7 +2494,7 @@ window.avviaApp = function(){
   function valutaArrivo(n){
     var g = oraN(n, "arrivo");
     var a = n.ais || null, c = (n.conferma && n.conferma.tipo === "arrivo") ? n.conferma : null;
-    if(!g || (a && (a.ormeggiata || a.in_uscita))) return null;
+    if(!g || (a && (a.ormeggiata || a.in_uscita || a.ferma_nei_moli))) return null;
     // orario d'arrivo gia' passato da un pezzo e nessuna posizione che dica il contrario: e' in porto
     if(adesso() > g[1] + 90 && !(a && (a.eta_iso || a.ancora || a.lontana || a.manovra))) return null;
     var dove = a ? " (a " + a.dist_nm + " miglia, " + a.vel + " nodi, AIS delle " + String(a.quando).replace(".", ":") + ")" : "";
@@ -2624,11 +2671,32 @@ window.avviaApp = function(){
   }
   function dataLunga(iso){ var p = String(iso || "").split("-"); return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : iso; }
 
+  /* Controllo del 12/11. Lo script del foglio scarta una visita gia' scritta con lo stesso ID, quindi rimandarla e'
+     sicuro. Pero': una richiesta rimasta appesa (rete del porto) bloccava la coda fino alla chiusura dell'app; un
+     rifiuto definitivo del foglio (dati non validi) la bloccava per sempre; un codice rifiutato non si vedeva da
+     nessuna parte (le visite restavano "in attesa di segnale"). Ora: 30 secondi al massimo per richiesta, le richieste
+     che il foglio non accettera' mai si tolgono con un avviso, il codice rifiutato si dice nel pannello. */
+  var ATTESA_FOGLIO_MS = 30000;
+  var erroreFoglio = "";
+  function chiediFoglio(url, opz){
+    var ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ac ? setTimeout(function(){ ac.abort(); }, ATTESA_FOGLIO_MS) : null;
+    return fetch(url, ac ? Object.assign({}, opz || {}, { signal: ac.signal }) : opz)
+      .then(function(r){ return r.json(); })
+      .then(function(d){ clearTimeout(timer); return d; }, function(e){ clearTimeout(timer); throw e; });
+  }
+  function segnaErroreFoglio(e){
+    var prima = erroreFoglio;
+    erroreFoglio = e === "codice" ? "Il foglio delle visite rifiuta il codice dell'app: le visite restano su questo telefono e partono appena si sistema." : "";
+    if(prima !== erroreFoglio) aggiornaNavi();
+  }
   function caricaVisite(){
     if(!FOGLIO || !navigator.onLine) return Promise.resolve();
-    return fetch(FOGLIO.url + "?codice=" + encodeURIComponent(FOGLIO.codice) + "&t=" + Date.now())
-      .then(function(r){ return r.json(); })
-      .then(function(d){ if(d && d.ok){ VISITE = d; scrivi(CH_VISITE, d); aggiornaNavi(); } })
+    return chiediFoglio(FOGLIO.url + "?codice=" + encodeURIComponent(FOGLIO.codice) + "&t=" + Date.now())
+      .then(function(d){
+        if(d && d.ok){ segnaErroreFoglio(""); VISITE = d; scrivi(CH_VISITE, d); aggiornaNavi(); }
+        else if(d && d.errore) segnaErroreFoglio(d.errore);
+      })
       .catch(function(){});
   }
   var inviando = false;
@@ -2636,11 +2704,19 @@ window.avviaApp = function(){
     if(!FOGLIO || inviando || !CODA.length || !navigator.onLine) return Promise.resolve();
     inviando = true;
     var c = CODA[0];
-    return fetch(FOGLIO.url, { method: "POST", body: JSON.stringify(Object.assign({ codice: FOGLIO.codice }, c)) })
-      .then(function(r){ return r.json(); })
+    return chiediFoglio(FOGLIO.url, { method: "POST", body: JSON.stringify(Object.assign({ codice: FOGLIO.codice }, c)) })
       .then(function(d){
-        if(!d || !d.ok) throw new Error((d && d.errore) || "risposta");
-        CODA.shift(); scrivi(CH_CODA, CODA);
+        if(d && d.ok){ segnaErroreFoglio(""); CODA.shift(); scrivi(CH_CODA, CODA); return; }
+        var e = (d && d.errore) || "risposta";
+        segnaErroreFoglio(e);
+        if(e === "dati" || e === "azione"){
+          // il foglio non la accettera' mai: si toglie, se no ferma tutte le visite dietro
+          CODA.shift(); scrivi(CH_CODA, CODA);
+          avvisa("Il foglio non ha accettato " + (c.azione === "annulla" ? "un annullamento" : "la visita di " + (c.nave || "una nave")) + ": avvisa chi gestisce l'app.", null);
+          aggiornaNavi();
+          return;
+        }
+        throw new Error(e);
       })
       .then(function(){ inviando = false; return CODA.length ? inviaCoda() : caricaVisite(); })
       .catch(function(){ inviando = false; });

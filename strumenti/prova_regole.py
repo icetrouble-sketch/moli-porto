@@ -477,7 +477,8 @@ class NaveLungaOltreIlTratto(unittest.TestCase):
 
     def test_la_regola_larga_vale_solo_con_le_condizioni_giuste(self):
         lat, lon = self.punto()
-        casi = {"nave corta (100 m)": (lat, lon, 100, 190), "prua di traverso": (lat, lon, 304, 90),
+        # (una nave corta parallela alla banchina oggi e' riconosciuta dalla regola dentro i moli: vedi OltreIlTratto)
+        casi = {"prua di traverso": (lat, lon, 304, 90),
                 "prua sconosciuta (511)": (lat, lon, 304, 511), "senza prua": (lat, lon, 304, None),
                 "troppo oltre la fine (200 m)": (*self.punto(oltre=200), 304, 190),
                 "troppo lontana di lato (60 m)": (*self.punto(lato=60), 304, 190),
@@ -1357,6 +1358,174 @@ class TipoIlleggibile(unittest.TestCase):
         d = {"navi": [{"nome": "X", "mmsi": "1", "tipo": "M/N", "fonti": ["giornale"], "dove": {}}], "statici": {"1": {"tipo": 70}}, "registro": {}}
         A.aggiorna_presenze(d, BANCHINE_PROVA, t)
         self.assertEqual(d["navi"][0]["tipo"], "M/N")                 # motonave: resta com'e'
+
+
+class OltreIlTratto(unittest.TestCase):
+    """Controllo del 12/11: una nave di 130 m ormeggiata (stato AIS 5) dentro i moli, 120 m oltre la fine del tratto
+    disegnato, risultava "in rada" e non compariva sulla mappa."""
+    t0 = quando("2026-11-12", "10:00")
+    FINE = 44.4010
+
+    def punto(self, oltre=120, lato=20):
+        return self.FINE + oltre / A.KY, 8.9000 - lato / A.KX
+
+    def test_ormeggiata_per_l_ais_oltre_la_fine_del_tratto_e_alla_banchina(self):
+        lat, lon = self.punto()
+        d = A.alla_banchina(lat, lon, BANCHINE_PROVA, 130, None, 5)
+        self.assertEqual((d["molo"], d["lato"], d["oltre_m"]), ("MOLO", "ponente", 120))
+
+    def test_nave_corta_parallela_alla_banchina_e_alla_banchina(self):
+        lat, lon = self.punto(oltre=112, lato=27)
+        self.assertEqual(A.alla_banchina(lat, lon, BANCHINE_PROVA, 100, 190, 0)["molo"], "MOLO")
+
+    def test_senza_le_condizioni_giuste_no(self):
+        casi = {"non ormeggiata e prua di traverso": (*self.punto(), 130, 90, 0),
+                "non ormeggiata e prua sconosciuta": (*self.punto(), 130, 511, 0),
+                "troppo oltre (160 m)": (*self.punto(oltre=160), 130, None, 5),
+                "troppo lontana di lato (60 m)": (*self.punto(lato=60), 130, None, 5),
+                "dalla parte della terra": (self.FINE + 120 / A.KY, 8.9000 + 20 / A.KX, 130, None, 5)}
+        for nome, (la, lo, lung, rotta, stato) in casi.items():
+            self.assertIsNone(A.alla_banchina(la, lo, BANCHINE_PROVA, lung, rotta, stato), nome)
+
+    def test_fuori_dall_area_dei_moli_no(self):
+        lat, lon = self.punto()
+        vecchio = A.MOLI_BOX
+        A.MOLI_BOX = (44.30, 44.35, 8.80, 8.85)
+        try:
+            self.assertIsNone(A.alla_banchina(lat, lon, BANCHINE_PROVA, 130, None, 5))
+        finally:
+            A.MOLI_BOX = vecchio
+
+    def test_nave_del_giornale_ora_ormeggiata_non_in_rada(self):
+        lat, lon = self.punto()
+        d = {"navi": [{"nome": "BETA", "imo": "9074729", "mmsi": "1", "tipo": "CARGO", "loa": 130, "giorno": "2026-11-12",
+                       "fonti": ["giornale"], "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente"}}],
+             "registro": {"1": posizione(self.t0, 3, lat=lat, lon=lon)},
+             "statici": {"1": {"imo": "9074729", "nome": "BETA", "tipo": 70, "lung": 130, "larg": 20}}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0, {"1"}, True)
+        a = d["navi"][0]["ais"]
+        self.assertTrue(a.get("ormeggiata"))
+        self.assertNotIn("ancora", a)
+
+    def test_ferma_nei_moli_lontana_dalle_banchine_non_e_in_rada_e_si_segnala(self):
+        p = posizione(self.t0, 3, lat=44.4050, lon=8.8950)            # dentro i moli, a centinaia di metri dalla banchina
+        p["stato"] = 0
+        d = {"navi": [{"nome": "BETA", "imo": "9074729", "mmsi": "1", "tipo": "CARGO", "loa": 130, "giorno": "2026-11-12",
+                       "fonti": ["giornale"], "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente"}}],
+             "registro": {"1": p}, "statici": {"1": {"imo": "9074729", "nome": "BETA", "tipo": 70, "lung": 130}}}
+        del A.RIEPILOGO[:]
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0, {"1"}, True)
+        a = d["navi"][0]["ais"]
+        self.assertTrue(a.get("ferma_nei_moli"))
+        self.assertNotIn("ancora", a)
+        self.assertEqual(a["banchina_vicina"], "MOLO ponente")
+        self.assertTrue(any("diagnosi, ferma nei moli" in r for r in A.RIEPILOGO))
+
+    def test_ferma_fuori_dai_moli_resta_in_rada(self):
+        p = posizione(self.t0, 3, lat=44.37, lon=8.88)
+        d = {"navi": [{"nome": "BETA", "imo": "9074729", "mmsi": "1", "tipo": "CARGO", "loa": 130, "giorno": "2026-11-12",
+                       "fonti": ["giornale"], "dove": {"terminal": "rinfuse", "molo": "MOLO", "lato": "ponente"}}],
+             "registro": {"1": p}, "statici": {"1": {"imo": "9074729", "nome": "BETA", "tipo": 70, "lung": 130}}}
+        A.aggiorna_presenze(d, BANCHINE_PROVA, self.t0, {"1"}, True)
+        self.assertTrue(d["navi"][0]["ais"].get("ancora"))
+
+
+class PartenzaERitorno(unittest.TestCase):
+    """Controllo del 12/11: una nave che va in rada la mattina e torna in banchina la sera (stesso giornale)
+    veniva tolta come partita."""
+    def righe(self):
+        r1 = riga("DELTA", "9074729", "CONT.", "MOVIMENTI", "08.00", accosto="DA CANEPA LEV. RAD. A RADA")
+        r2 = riga("DELTA", "9074729", "CONT.", "MOVIMENTI", "20.00", accosto="DA RADA A CANEPA LEV. RAD.")
+        r1["dove"] = r2["dove"] = None
+        return [r1, r2]
+
+    def test_la_partenza_prima_del_ritorno_non_toglie_la_nave(self):
+        navi, _ = A.navi_dal_giornale(self.righe(), "2026-11-12")
+        n = navi[0]
+        self.assertEqual((n["arrivo"], n["partenza"], n["partenza_prima"]), ("20.00", None, "08.00"))
+        d = {"navi": []}
+        A.unisci_giornale(d, navi, "2026-11-12", quando("2026-11-12", "06:00"))
+        A.pulizia(d, quando("2026-11-12", "10:00"))
+        self.assertEqual([x["nome"] for x in d["navi"]], ["DELTA"])
+
+    def test_arrivo_e_poi_partenza_restano_come_sempre(self):
+        navi, _ = A.navi_dal_giornale([riga("ALFA", "9074729", "CONT.", "ARRIVI", "06.00"),
+                                       riga("ALFA", "9074729", "CONT.", "PARTENZE", "22.00")], "2026-11-12")
+        self.assertEqual((navi[0]["arrivo"], navi[0]["partenza"]), ("06.00", "22.00"))
+        self.assertNotIn("partenza_prima", navi[0])
+
+    def test_uscita_vista_con_ritorno_in_programma_non_toglie_la_nave(self):
+        from datetime import timedelta
+        t = quando("2026-11-12", "08:15")
+        n = {"nome": "DELTA", "imo": "9074729", "tipo": "CONT.", "giorno": "2026-11-12", "fonti": ["giornale"],
+             "arrivo": "20.00", "arrivo_giorno": "2026-11-12", "uscita_vista": t.isoformat(),
+             "visto_banchina": (t - timedelta(minutes=30)).isoformat(), "ais": {"in_uscita": True, "vel": 6, "dist_nm": 2},
+             "dove": {"terminal": "rinfuse"}}
+        d = {"navi": [n]}
+        A.pulizia(d, t + timedelta(hours=3))
+        self.assertEqual([x["nome"] for x in d["navi"]], ["DELTA"])
+        n["arrivo"] = None; n.pop("arrivo_giorno")                       # senza ritorno: si toglie come sempre
+        A.pulizia(d, t + timedelta(hours=3))
+        self.assertEqual(d["navi"], [])
+
+
+class RitardoRicalcolato(unittest.TestCase):
+    def test_il_ritardo_si_toglie_quando_arriva_un_nuovo_orario(self):
+        n = {"nome": "EPSILON", "imo": "9074729", "tipo": "CONT.", "giorno": "2026-11-12", "fonti": ["giornale"],
+             "partenza": "10.00", "partenza_giorno": "2026-11-12", "visto_banchina": quando("2026-11-12", "11:40").isoformat(),
+             "ais": {"ormeggiata": True}, "dove": {"terminal": "sech"}}
+        d = {"navi": [n]}
+        A.pulizia(d, quando("2026-11-12", "11:45"))
+        self.assertTrue(d["navi"][0].get("ritardo"))
+        n["conferma"] = {"tipo": "partenza", "quando": quando("2026-11-12", "18:00").isoformat()}
+        A.pulizia(d, quando("2026-11-12", "12:00"))
+        self.assertNotIn("ritardo", d["navi"][0])
+
+
+class AisFermo(unittest.TestCase):
+    def test_l_ora_delle_ultime_posizioni_va_all_app(self):
+        self.assertIn("ais_ultimo", A.dati_per_app({"ais_ultimo": "x", "registro": {}}))
+        self.assertNotIn("registro", A.dati_per_app({"ais_ultimo": "x", "registro": {}}))
+
+    def test_i_messaggi_di_ais_fermo_sono_un_problema_nel_riepilogo(self):
+        import inspect
+        testo = inspect.getsource(A)
+        for frase in ("ATTENZIONE: aisstream ha rifiutato", "ATTENZIONE: nessuna posizione AIS"):
+            self.assertIn(frase, testo)
+            self.assertTrue(any(k in frase for k in A.RIGHE_PROBLEMA), frase)
+
+
+class StrumentoMappa(unittest.TestCase):
+    """strumenti/mappa.py: apri e chiudi tengono la stessa chiave (sale e iterazioni), cosi' i file delle navi e Face ID
+    continuano a funzionare; un dati.js rotto non si cifra."""
+    def test_apri_modifica_chiudi(self):
+        import json, base64, mappa as M
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        with tempfile.TemporaryDirectory() as d:
+            D0 = {"v": 1, "alg": "PBKDF2-SHA256/AES-256-GCM", "iter": 1000, "salt": base64.b64encode(b"s" * 16).decode()}
+            testo = 'window.CONFIG={};\nwindow.BANCHINE={"MOLO":{"terminal":"rinfuse"}};\nwindow.TERMINAL=[{"nome":"A"}];\n'
+            D0.update(M.cifra("prova", D0, testo))
+            M.CIFRATO, M.CHIARO = os.path.join(d, "dati.enc.js"), os.path.join(d, "dati.js")
+            open(M.CIFRATO, "w").write("window.DATI_CIFRATI = " + json.dumps(D0) + ";\n")
+            os.environ["CODICE_MAPPA"] = "prova"
+            try:
+                M.apri()
+                self.assertEqual(open(M.CHIARO).read(), testo)
+                open(M.CHIARO, "w").write(testo.replace('"A"', '"B"'))
+                M.chiudi()
+                D1 = M.leggi_cifrato(M.CIFRATO)
+                self.assertFalse(os.path.exists(M.CHIARO))
+                self.assertEqual((D1["salt"], D1["iter"]), (D0["salt"], D0["iter"]))
+                self.assertIn('"B"', M.decifra("prova", D1))
+                # la chiave e' la stessa: un file cifrato prima (come navi.enc.json) si apre ancora
+                k = M.chiave("prova", D1)
+                self.assertEqual(AESGCM(k).decrypt(base64.b64decode(D0["iv"]), base64.b64decode(D0["ct"]), None).decode(), testo)
+                open(M.CHIARO, "w").write("window.CONFIG={};\nwindow.TERMINAL=[];\n")      # manca BANCHINE: non si cifra
+                with self.assertRaises(SystemExit):
+                    M.chiudi()
+                self.assertTrue(os.path.exists(M.CHIARO))
+            finally:
+                os.environ.pop("CODICE_MAPPA", None)
 
 
 if __name__ == "__main__":
